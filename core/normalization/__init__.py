@@ -33,12 +33,14 @@ Models:
 from core.normalization.violations import (
     ViolationType,
     SeverityLevel,
+    ViolationSeverity,  # Alias for SeverityLevel
     NFViolation,
     Violation1NF,
     Violation2NF,
     Violation3NF,
     ViolationBCNF,
     ViolationDetector,
+    ComprehensiveViolationDetector,
 )
 from core.normalization.decomposer import (
     SchemaDecomposer,
@@ -65,12 +67,14 @@ __all__ = [
     # Violation types and detection
     "ViolationType",
     "SeverityLevel",
+    "ViolationSeverity",  # Alias for SeverityLevel
     "NFViolation",
     "Violation1NF",
     "Violation2NF",
     "Violation3NF",
     "ViolationBCNF",
     "ViolationDetector",
+    "ComprehensiveViolationDetector",
     # Decomposer
     "SchemaDecomposer",
     "DecomposedTable",

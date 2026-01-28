@@ -922,3 +922,691 @@ class ViolationDetector:
             result["array_length_avg"] = sum(lengths) / len(lengths) if lengths else 0
 
         return result
+
+
+class ComprehensiveViolationDetector:
+    """
+    Comprehensive detector for normalization violations across all tables.
+
+    This class provides detection of normalization violations across all normal
+    forms (1NF, 2NF, 3NF, BCNF) using table metadata, functional dependencies,
+    and candidate keys. It's designed to analyze entire schemas at once.
+
+    Unlike ViolationDetector which analyzes single tables, this class takes
+    dictionaries of FDs and candidate keys for all tables in a schema.
+
+    Attributes:
+        tables: List of Table objects to analyze.
+        functional_dependencies: FDs indexed by table name.
+        candidate_keys: Candidate keys indexed by table name.
+
+    Example:
+        >>> from core.models.schema import Table, Column
+        >>> from core.models.analysis import FunctionalDependency, CandidateKey
+        >>>
+        >>> # Create test data
+        >>> table = Table(name="orders", columns=[...])
+        >>> fds = {"orders": [FunctionalDependency(...)]}
+        >>> keys = {"orders": [CandidateKey(...)]}
+        >>>
+        >>> # Detect violations
+        >>> detector = ComprehensiveViolationDetector(
+        ...     tables=[table],
+        ...     functional_dependencies=fds,
+        ...     candidate_keys=keys
+        ... )
+        >>> violations = detector.detect_all_violations()
+        >>> print(detector.get_highest_normal_form("orders"))
+        "3NF"
+    """
+
+    # Data types that indicate potential 1NF violations
+    ARRAY_TYPES: FrozenSet[str] = frozenset({
+        "array", "json", "jsonb", "hstore", "xml",
+        "text[]", "integer[]", "varchar[]", "bytea[]",
+        "uuid[]", "boolean[]", "bigint[]", "smallint[]",
+        "real[]", "double precision[]", "numeric[]", "date[]",
+        "timestamp[]", "timestamptz[]", "interval[]",
+        "_text", "_int4", "_int8", "_float4", "_float8",
+        "_bool", "_varchar", "_uuid", "_numeric", "_date",
+        "_timestamp", "_timestamptz", "_interval",
+    })
+
+    # Regex patterns for detecting repeating column groups
+    REPEATING_PATTERNS: List[Tuple[str, re.Pattern]] = [
+        # name1, name2, name3 pattern
+        ("numbered", re.compile(r"^(\w+?)(\d+)$", re.IGNORECASE)),
+        # name_1, name_2, name_3 pattern
+        ("underscore_numbered", re.compile(r"^(\w+?)_(\d+)$", re.IGNORECASE)),
+        # first_name, second_name, third_name pattern (ordinal)
+        ("ordinal", re.compile(
+            r"^(first|second|third|fourth|fifth)_(\w+)$", re.IGNORECASE
+        )),
+        # primary_X, secondary_X, tertiary_X pattern
+        ("priority", re.compile(
+            r"^(primary|secondary|tertiary|alt|alternate|backup)_(\w+)$",
+            re.IGNORECASE
+        )),
+        # home_phone, work_phone, mobile_phone pattern
+        ("prefixed", re.compile(
+            r"^(home|work|office|mobile|cell|main|other|emergency)_(\w+)$",
+            re.IGNORECASE
+        )),
+    ]
+
+    def __init__(
+        self,
+        tables: List[Table],
+        functional_dependencies: Dict[str, List[FunctionalDependency]],
+        candidate_keys: Dict[str, List[CandidateKey]],
+    ) -> None:
+        """
+        Initialize the comprehensive violation detector.
+
+        Args:
+            tables: List of Table objects to analyze.
+            functional_dependencies: Dictionary mapping table names to
+                their discovered functional dependencies.
+            candidate_keys: Dictionary mapping table names to their
+                discovered candidate keys.
+        """
+        self.tables = tables
+        self.functional_dependencies = functional_dependencies
+        self.candidate_keys = candidate_keys
+
+        # Build lookup tables for efficient access
+        self._table_lookup: Dict[str, Table] = {t.name: t for t in tables}
+        self._column_lookup: Dict[str, Dict[str, Column]] = {}
+        for table in tables:
+            self._column_lookup[table.name] = {c.name: c for c in table.columns}
+
+    def detect_1nf_violations(self, table: Table) -> List[Violation1NF]:
+        """
+        Detect First Normal Form violations in a table.
+
+        Checks for:
+        1. Array or JSON column types (non-atomic values)
+        2. Repeating column groups (e.g., phone1, phone2, phone3)
+        3. Multi-valued attributes based on naming patterns
+
+        Args:
+            table: The table to analyze.
+
+        Returns:
+            List of Violation1NF objects describing any violations found.
+
+        Example:
+            >>> violations = detector.detect_1nf_violations(customers_table)
+            >>> for v in violations:
+            ...     print(f"{v.violation_type}: {v.description}")
+        """
+        violations: List[Violation1NF] = []
+
+        # Check for array/JSON types (non-atomic values)
+        for column in table.columns:
+            if self._check_array_types(column):
+                violations.append(Violation1NF(
+                    column_name=column.name,
+                    violation_type=ViolationType.NON_ATOMIC,
+                    description=(
+                        f"Column '{column.name}' has type '{column.data_type}' which "
+                        f"can store non-atomic values, violating 1NF."
+                    ),
+                    severity=SeverityLevel.HIGH,
+                    suggested_fix=(
+                        f"Create a separate table for '{column.name}' values with a "
+                        f"foreign key reference back to '{table.name}'. For JSON "
+                        f"columns, consider extracting structured data into proper "
+                        f"relational tables."
+                    ),
+                    related_columns=[column.name],
+                ))
+
+        # Check for repeating column groups
+        repeating_groups = self._check_repeating_pattern(table)
+        for pattern, columns in repeating_groups:
+            violations.append(Violation1NF(
+                column_name=columns[0],
+                violation_type=ViolationType.REPEATING_GROUP,
+                description=(
+                    f"Columns {list(columns)} form a repeating group with pattern "
+                    f"'{pattern}'. This violates 1NF as it represents a "
+                    f"multi-valued attribute."
+                ),
+                severity=SeverityLevel.HIGH,
+                suggested_fix=(
+                    f"Create a new table to store '{pattern}' values with a "
+                    f"foreign key reference back to '{table.name}'. Each row "
+                    f"in the new table would hold one value instead of having "
+                    f"multiple numbered columns."
+                ),
+                related_columns=list(columns),
+            ))
+
+        return violations
+
+    def detect_2nf_violations(self, table: Table) -> List[Violation2NF]:
+        """
+        Detect Second Normal Form violations in a table.
+
+        A table is in 2NF if:
+        1. It is in 1NF
+        2. No non-key column depends on only part of a composite key
+
+        This method checks for partial dependencies where a non-key column
+        depends on a proper subset of the primary key.
+
+        Args:
+            table: The table to analyze.
+
+        Returns:
+            List of Violation2NF objects describing any partial dependencies.
+
+        Example:
+            >>> violations = detector.detect_2nf_violations(order_items_table)
+            >>> for v in violations:
+            ...     print(f"Partial dependency: {v.partial_key} -> {v.dependent_columns}")
+        """
+        violations: List[Violation2NF] = []
+
+        # Get the primary key columns
+        pk_columns = set(table.primary_key_columns)
+
+        # 2NF only applies to tables with composite keys
+        if len(pk_columns) <= 1:
+            return violations
+
+        # Get non-key columns
+        non_key_columns = self._get_non_key_columns(table)
+
+        # Get functional dependencies for this table
+        table_fds = self.functional_dependencies.get(table.name, [])
+
+        for fd in table_fds:
+            determinant = set(fd.determinant)
+
+            # Check if this is a partial dependency:
+            # - Determinant is a proper subset of the primary key
+            # - Dependent is a non-key column
+            # - FD is not trivial
+            if (
+                determinant < pk_columns  # proper subset
+                and fd.dependent in non_key_columns
+                and not fd.is_trivial
+            ):
+                violations.append(Violation2NF(
+                    table_name=table.name,
+                    partial_key=list(determinant),
+                    dependent_columns=[fd.dependent],
+                    full_primary_key=list(pk_columns),
+                    description=(
+                        f"Column '{fd.dependent}' depends only on "
+                        f"{list(determinant)} which is a "
+                        f"subset of the primary key {list(pk_columns)}. "
+                        f"This is a partial dependency violating 2NF."
+                    ),
+                ))
+
+        return violations
+
+    def detect_3nf_violations(self, table: Table) -> List[Violation3NF]:
+        """
+        Detect Third Normal Form violations in a table.
+
+        A table is in 3NF if:
+        1. It is in 2NF
+        2. No non-key column depends transitively on the primary key
+           (i.e., no non-key column depends on another non-key column)
+
+        This method checks for transitive dependencies where a non-key
+        column determines another non-key column.
+
+        Args:
+            table: The table to analyze.
+
+        Returns:
+            List of Violation3NF objects describing any transitive dependencies.
+
+        Example:
+            >>> violations = detector.detect_3nf_violations(employees_table)
+            >>> for v in violations:
+            ...     print(f"Transitive: {v.determinant} -> {v.dependent_columns}")
+        """
+        violations: List[Violation3NF] = []
+
+        # Get key columns (all candidate keys)
+        all_key_columns: Set[str] = set()
+        table_keys = self.candidate_keys.get(table.name, [])
+        for key in table_keys:
+            all_key_columns.update(key.columns)
+
+        # Also include primary key columns
+        all_key_columns.update(table.primary_key_columns)
+
+        # Get non-key columns
+        non_key_columns = self._get_non_key_columns(table)
+
+        # Get functional dependencies for this table
+        table_fds = self.functional_dependencies.get(table.name, [])
+
+        for fd in table_fds:
+            if fd.is_trivial:
+                continue
+
+            determinant = set(fd.determinant)
+
+            # Check if this is a transitive dependency:
+            # - Determinant consists of non-key columns only
+            # - Dependent is also a non-key column
+            # - Determinant is not a superkey
+            if (
+                determinant.issubset(non_key_columns)
+                and fd.dependent in non_key_columns
+                and not self._is_superkey(determinant, table)
+            ):
+                violations.append(Violation3NF(
+                    table_name=table.name,
+                    determinant=list(determinant),
+                    dependent_columns=[fd.dependent],
+                    primary_key=table.primary_key_columns,
+                    description=(
+                        f"Column '{fd.dependent}' depends on non-key column(s) "
+                        f"{list(determinant)}. This is a transitive dependency: "
+                        f"the primary key determines {list(determinant)}, which "
+                        f"in turn determines '{fd.dependent}'."
+                    ),
+                ))
+
+        return violations
+
+    def detect_bcnf_violations(self, table: Table) -> List[ViolationBCNF]:
+        """
+        Detect Boyce-Codd Normal Form violations in a table.
+
+        A table is in BCNF if:
+        1. It is in 3NF
+        2. For every non-trivial functional dependency X -> Y,
+           X is a superkey
+
+        BCNF is stricter than 3NF and eliminates all redundancy that can
+        be detected using functional dependencies alone.
+
+        Args:
+            table: The table to analyze.
+
+        Returns:
+            List of ViolationBCNF objects describing any violations.
+
+        Example:
+            >>> violations = detector.detect_bcnf_violations(course_table)
+            >>> for v in violations:
+            ...     print(f"Non-superkey determinant: {v.determinant}")
+        """
+        violations: List[ViolationBCNF] = []
+
+        # Get candidate keys for this table
+        table_keys = self.candidate_keys.get(table.name, [])
+        candidate_key_lists = [list(k.columns) for k in table_keys]
+
+        # If no candidate keys known, use primary key
+        if not candidate_key_lists and table.primary_key_columns:
+            candidate_key_lists = [table.primary_key_columns]
+
+        # Get functional dependencies for this table
+        table_fds = self.functional_dependencies.get(table.name, [])
+
+        for fd in table_fds:
+            if fd.is_trivial:
+                continue
+
+            determinant = set(fd.determinant)
+
+            # Check if determinant is a superkey
+            if not self._is_superkey(determinant, table):
+                violations.append(ViolationBCNF(
+                    table_name=table.name,
+                    determinant=list(determinant),
+                    dependent_columns=[fd.dependent],
+                    candidate_keys=candidate_key_lists,
+                    description=(
+                        f"Functional dependency {list(determinant)} -> {fd.dependent} "
+                        f"violates BCNF because {list(determinant)} is not a "
+                        f"superkey of '{table.name}'."
+                    ),
+                ))
+
+        return violations
+
+    def detect_all_violations(self) -> Dict[str, List[Union[Violation1NF, Violation2NF, Violation3NF, ViolationBCNF]]]:
+        """
+        Detect all normalization violations across all tables.
+
+        Runs all violation detection methods (1NF, 2NF, 3NF, BCNF) on
+        each table and aggregates the results.
+
+        Returns:
+            Dictionary mapping table names to lists of violations.
+            Tables with no violations are included with empty lists.
+
+        Example:
+            >>> all_violations = detector.detect_all_violations()
+            >>> for table_name, violations in all_violations.items():
+            ...     print(f"{table_name}: {len(violations)} violations")
+        """
+        all_violations: Dict[str, List] = {}
+
+        for table in self.tables:
+            table_violations: List = []
+
+            # Detect all types of violations
+            table_violations.extend(self.detect_1nf_violations(table))
+            table_violations.extend(self.detect_2nf_violations(table))
+            table_violations.extend(self.detect_3nf_violations(table))
+            table_violations.extend(self.detect_bcnf_violations(table))
+
+            # Sort by severity (critical first)
+            severity_order = {
+                SeverityLevel.CRITICAL: 0,
+                SeverityLevel.HIGH: 1,
+                SeverityLevel.MEDIUM: 2,
+                SeverityLevel.LOW: 3,
+                SeverityLevel.INFO: 4,
+                "critical": 0,
+                "high": 1,
+                "medium": 2,
+                "low": 3,
+            }
+
+            def get_severity(v: Any) -> int:
+                if hasattr(v, 'severity'):
+                    return severity_order.get(v.severity, 5)
+                return 5
+
+            table_violations.sort(key=get_severity)
+
+            all_violations[table.name] = table_violations
+
+        return all_violations
+
+    def get_highest_normal_form(self, table_name: str) -> str:
+        """
+        Determine the highest normal form achieved by a table.
+
+        Analyzes the table for violations at each normal form level and
+        returns the highest form that the table satisfies.
+
+        Args:
+            table_name: Name of the table to analyze.
+
+        Returns:
+            The highest normal form: "UNNORMALIZED", "1NF", "2NF", "3NF",
+            or "BCNF".
+
+        Raises:
+            ValueError: If the table is not found.
+
+        Example:
+            >>> nf = detector.get_highest_normal_form("orders")
+            >>> print(f"Orders table is in {nf}")
+            "Orders table is in 3NF"
+        """
+        table = self._table_lookup.get(table_name)
+        if table is None:
+            raise ValueError(f"Table '{table_name}' not found")
+
+        # Check for 1NF violations
+        violations_1nf = self.detect_1nf_violations(table)
+        if violations_1nf:
+            return "UNNORMALIZED"
+
+        # Check for 2NF violations
+        violations_2nf = self.detect_2nf_violations(table)
+        if violations_2nf:
+            return "1NF"
+
+        # Check for 3NF violations
+        violations_3nf = self.detect_3nf_violations(table)
+        if violations_3nf:
+            return "2NF"
+
+        # Check for BCNF violations
+        violations_bcnf = self.detect_bcnf_violations(table)
+        if violations_bcnf:
+            return "3NF"
+
+        return "BCNF"
+
+    def _is_superkey(self, columns: Set[str], table: Table) -> bool:
+        """
+        Check if a set of columns is a superkey for a table.
+
+        A superkey is a set of columns that contains at least one
+        candidate key. It can uniquely identify rows in the table.
+
+        Args:
+            columns: Set of column names to check.
+            table: The table to check against.
+
+        Returns:
+            True if the columns form a superkey, False otherwise.
+        """
+        # Get candidate keys for this table
+        table_keys = self.candidate_keys.get(table.name, [])
+
+        # Check if columns contain any candidate key
+        for key in table_keys:
+            key_set = set(key.columns)
+            if key_set.issubset(columns):
+                return True
+
+        # Also check against primary key
+        pk_columns = set(table.primary_key_columns)
+        if pk_columns and pk_columns.issubset(columns):
+            return True
+
+        return False
+
+    def _get_non_key_columns(self, table: Table) -> Set[str]:
+        """
+        Get all non-key columns for a table.
+
+        Non-key columns are columns that are not part of any candidate key.
+
+        Args:
+            table: The table to analyze.
+
+        Returns:
+            Set of non-key column names.
+        """
+        # Get all key columns
+        key_columns: Set[str] = set()
+
+        # Add primary key columns
+        key_columns.update(table.primary_key_columns)
+
+        # Add candidate key columns
+        table_keys = self.candidate_keys.get(table.name, [])
+        for key in table_keys:
+            key_columns.update(key.columns)
+
+        # Return columns not in any key
+        all_columns = {c.name for c in table.columns}
+        return all_columns - key_columns
+
+    def _check_array_types(self, column: Column) -> bool:
+        """
+        Check if a column has an array or JSON type.
+
+        These types can store non-atomic values, violating 1NF.
+
+        Args:
+            column: The column to check.
+
+        Returns:
+            True if the column has an array/JSON type, False otherwise.
+        """
+        # Get the base type (remove modifiers)
+        base_type = column.data_type.lower().strip()
+
+        # Check for array notation
+        if base_type.endswith("[]"):
+            return True
+
+        # Check for explicit array types
+        if base_type.startswith("_"):  # PostgreSQL internal array notation
+            return True
+
+        # Check against known array/JSON types
+        base_without_params = base_type.split("(")[0].strip()
+        return base_without_params in self.ARRAY_TYPES
+
+    def _check_repeating_pattern(self, table: Table) -> List[Tuple[str, Tuple[str, ...]]]:
+        """
+        Detect repeating column patterns in a table.
+
+        Looks for patterns like:
+        - phone1, phone2, phone3
+        - address_1, address_2, address_3
+        - first_name, second_name, third_name
+        - home_phone, work_phone, mobile_phone
+
+        Args:
+            table: The table to analyze.
+
+        Returns:
+            List of tuples (pattern_base, (matching_column_names...))
+        """
+        found_patterns: Dict[str, List[str]] = {}
+        column_names = [c.name for c in table.columns]
+
+        for col_name in column_names:
+            for pattern_type, pattern in self.REPEATING_PATTERNS:
+                match = pattern.match(col_name)
+                if match:
+                    groups = match.groups()
+                    if len(groups) >= 2:
+                        # Determine the base pattern
+                        if pattern_type in ("ordinal", "priority", "prefixed"):
+                            # Use the suffix as base (e.g., "phone" from "home_phone")
+                            base = groups[1].lower()
+                        else:
+                            # Use the prefix as base (e.g., "phone" from "phone1")
+                            base = groups[0].lower()
+
+                        if base not in found_patterns:
+                            found_patterns[base] = []
+                        if col_name not in found_patterns[base]:
+                            found_patterns[base].append(col_name)
+                    break
+
+        # Only return patterns with multiple columns (actual repeating groups)
+        results: List[Tuple[str, Tuple[str, ...]]] = []
+        for base, columns in found_patterns.items():
+            if len(columns) >= 2:  # Need at least 2 to be a repeating group
+                results.append((base, tuple(sorted(columns))))
+
+        return results
+
+    def get_violation_summary(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Get a summary of violations by table and normal form.
+
+        Returns:
+            Dictionary with structure:
+            {
+                "table_name": {
+                    "1NF": count,
+                    "2NF": count,
+                    "3NF": count,
+                    "BCNF": count,
+                    "total": count,
+                    "highest_nf": "3NF"
+                }
+            }
+
+        Example:
+            >>> summary = detector.get_violation_summary()
+            >>> for table, stats in summary.items():
+            ...     print(f"{table}: {stats['highest_nf']} ({stats['total']} violations)")
+        """
+        summary: Dict[str, Dict[str, Any]] = {}
+
+        for table in self.tables:
+            counts: Dict[str, Any] = {
+                "1NF": 0,
+                "2NF": 0,
+                "3NF": 0,
+                "BCNF": 0,
+                "total": 0,
+            }
+
+            # Count violations by type
+            v1nf = self.detect_1nf_violations(table)
+            v2nf = self.detect_2nf_violations(table)
+            v3nf = self.detect_3nf_violations(table)
+            vbcnf = self.detect_bcnf_violations(table)
+
+            counts["1NF"] = len(v1nf)
+            counts["2NF"] = len(v2nf)
+            counts["3NF"] = len(v3nf)
+            counts["BCNF"] = len(vbcnf)
+            counts["total"] = counts["1NF"] + counts["2NF"] + counts["3NF"] + counts["BCNF"]
+            counts["highest_nf"] = self.get_highest_normal_form(table.name)
+
+            summary[table.name] = counts
+
+        return summary
+
+    def get_violations_by_severity(
+        self,
+        severity: Union[SeverityLevel, str]
+    ) -> Dict[str, List]:
+        """
+        Get all violations of a specific severity level.
+
+        Args:
+            severity: The severity level to filter by.
+
+        Returns:
+            Dictionary mapping table names to lists of violations
+            with the specified severity.
+        """
+        all_violations = self.detect_all_violations()
+        filtered: Dict[str, List] = {}
+
+        severity_val = severity.value if isinstance(severity, SeverityLevel) else severity
+
+        for table_name, violations in all_violations.items():
+            matching = []
+            for v in violations:
+                v_severity = v.severity.value if hasattr(v.severity, 'value') else v.severity
+                if v_severity == severity_val:
+                    matching.append(v)
+            if matching:
+                filtered[table_name] = matching
+
+        return filtered
+
+    def get_violations_by_type(
+        self,
+        violation_type: ViolationType
+    ) -> Dict[str, List]:
+        """
+        Get all violations of a specific type.
+
+        Args:
+            violation_type: The type of violation to filter by.
+
+        Returns:
+            Dictionary mapping table names to lists of violations
+            with the specified type.
+        """
+        all_violations = self.detect_all_violations()
+        filtered: Dict[str, List] = {}
+
+        for table_name, violations in all_violations.items():
+            matching = [v for v in violations if v.violation_type == violation_type]
+            if matching:
+                filtered[table_name] = matching
+
+        return filtered

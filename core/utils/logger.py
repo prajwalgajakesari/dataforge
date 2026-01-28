@@ -63,5 +63,8 @@ def setup_logger(
     return logger
 
 
+# Alias for backward compatibility
+get_logger = setup_logger
+
 # Default logger for DataForge
 default_logger = setup_logger("dataforge")

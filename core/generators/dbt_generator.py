@@ -19,6 +19,7 @@ import yaml
 from jinja2 import Template
 from pydantic import BaseModel, Field
 
+from core.models.schema import ForeignKeyRelationship
 from core.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -339,8 +340,40 @@ select * from renamed
             timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         )
 
-    def _generate_dimension_model(self, model: DimensionModelDefinition) -> str:
-        """Generate SQL for a dimension model."""
+    def _generate_dimension_model(
+        self,
+        model: DimensionModelDefinition,
+        foreign_keys: Optional[List[ForeignKeyRelationship]] = None,
+    ) -> str:
+        """
+        Generate SQL for a dimension model.
+
+        Args:
+            model: Dimension model definition.
+            foreign_keys: Optional list of FK relationships for join generation.
+
+        Returns:
+            Generated SQL string.
+        """
+        # Generate join clauses from FK definitions
+        join_clauses = ""
+        if foreign_keys and len(model.source_models) > 1:
+            base_model = model.source_models[0]
+            base_alias = base_model.split("_")[1] if "_" in base_model else base_model
+            for source_model in model.source_models[1:]:
+                join_clause = self._generate_join_clause(
+                    base_table=base_model,
+                    join_table=source_model,
+                    foreign_keys=foreign_keys,
+                    join_type="left join",
+                )
+                if join_clause:
+                    join_clauses += f"\n    {join_clause}"
+                else:
+                    # Fallback: generate commented placeholder if no FK found
+                    join_alias = source_model.split("_")[1] if "_" in source_model else source_model
+                    join_clauses += f"\n    -- left join {join_alias} on <add join condition>"
+
         template = Template(
             """{{config(
     materialized='table',
@@ -372,13 +405,7 @@ joined as (
         {{ col.name }}{% if col.description %} -- {{ col.description }}{% endif %}{{ "," if not loop.last else "" }}
 {% endfor %}
 
-    from {{ source_models[0].split('_')[1] if '_' in source_models[0] else source_models[0] }}
-{% if source_models|length > 1 %}
-    -- Add join logic here
-{% for source_model in source_models[1:] %}
-    -- left join {{ source_model.split('_')[1] if '_' in source_model else source_model }} using (key_column)
-{% endfor %}
-{% endif %}
+    from {{ source_models[0].split('_')[1] if '_' in source_models[0] else source_models[0] }}{{ join_clauses }}
 )
 
 select * from joined
@@ -396,11 +423,43 @@ select * from joined
             source_models=model.source_models,
             pk_columns=pk_columns,
             other_columns=other_columns,
+            join_clauses=join_clauses,
             timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         )
 
-    def _generate_fact_model(self, model: FactModelDefinition) -> str:
-        """Generate SQL for a fact model."""
+    def _generate_fact_model(
+        self,
+        model: FactModelDefinition,
+        foreign_keys: Optional[List[ForeignKeyRelationship]] = None,
+    ) -> str:
+        """
+        Generate SQL for a fact model.
+
+        Args:
+            model: Fact model definition.
+            foreign_keys: Optional list of FK relationships for join generation.
+
+        Returns:
+            Generated SQL string.
+        """
+        # Generate join clauses from FK definitions
+        join_clauses = ""
+        if foreign_keys and len(model.source_models) > 1:
+            base_model = model.source_models[0]
+            for source_model in model.source_models[1:]:
+                join_clause = self._generate_join_clause(
+                    base_table=base_model,
+                    join_table=source_model,
+                    foreign_keys=foreign_keys,
+                    join_type="left join",
+                )
+                if join_clause:
+                    join_clauses += f"\n    {join_clause}"
+                else:
+                    # Fallback: generate commented placeholder if no FK found
+                    join_alias = source_model.split("_")[1] if "_" in source_model else source_model
+                    join_clauses += f"\n    -- left join {join_alias} on <add join condition>"
+
         template = Template(
             """{{config(
     materialized='table',
@@ -432,13 +491,7 @@ fact as (
         {{ measure }}{{ "," if not loop.last else "" }}
 {% endfor %}
 
-    from {{ source_models[0].split('_')[1] if '_' in source_models[0] else source_models[0] }}
-{% if source_models|length > 1 %}
-    -- Add join logic for dimensions here
-{% for source_model in source_models[1:] %}
-    -- left join {{ source_model.split('_')[1] if '_' in source_model else source_model }} using (key_column)
-{% endfor %}
-{% endif %}
+    from {{ source_models[0].split('_')[1] if '_' in source_models[0] else source_models[0] }}{{ join_clauses }}
 )
 
 select * from fact
@@ -458,8 +511,70 @@ select * from fact
             dimensions=model.dimensions,
             measures=model.measures,
             grain=model.grain,
+            join_clauses=join_clauses,
             timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         )
+
+    def _generate_join_clause(
+        self,
+        base_table: str,
+        join_table: str,
+        foreign_keys: List[ForeignKeyRelationship],
+        join_type: str = "left join",
+    ) -> str:
+        """
+        Generate proper join clause from FK definitions.
+
+        Args:
+            base_table: The base/left table in the join (can be model name like 'stg_orders').
+            join_table: The table to join (can be model name like 'stg_customers').
+            foreign_keys: List of FK relationships to search for join conditions.
+            join_type: Type of join (e.g., 'left join', 'inner join').
+
+        Returns:
+            Generated join clause string, or empty string if no matching FK found.
+        """
+        if not foreign_keys:
+            return ""
+
+        # Extract table names from model names (e.g., 'stg_orders' -> 'orders')
+        base_name = base_table.split("_", 1)[1] if "_" in base_table else base_table
+        join_name = join_table.split("_", 1)[1] if "_" in join_table else join_table
+
+        # Get alias for the join table (used in SQL)
+        join_alias = join_table.split("_")[1] if "_" in join_table else join_table
+        base_alias = base_table.split("_")[1] if "_" in base_table else base_table
+
+        # Search for matching FK relationship
+        matching_fk: Optional[ForeignKeyRelationship] = None
+
+        for fk in foreign_keys:
+            # Check if FK goes from base_table to join_table
+            if (
+                fk.from_table.lower() == base_name.lower()
+                and fk.to_table.lower() == join_name.lower()
+            ):
+                matching_fk = fk
+                break
+            # Check reverse direction (join_table FK points to base_table)
+            if (
+                fk.from_table.lower() == join_name.lower()
+                and fk.to_table.lower() == base_name.lower()
+            ):
+                matching_fk = fk.reverse()
+                break
+
+        if not matching_fk:
+            return ""
+
+        # Build join condition(s)
+        conditions = []
+        for from_col, to_col in zip(matching_fk.from_columns, matching_fk.to_columns):
+            conditions.append(f"{base_alias}.{from_col} = {join_alias}.{to_col}")
+
+        join_condition = " and ".join(conditions)
+
+        return f"{join_type} {join_alias} on {join_condition}"
 
     def _generate_staging_schema_yml(self, design: ModelDesign) -> str:
         """Generate schema.yml for staging models."""
