@@ -88,6 +88,9 @@ dataforge-workspaces/
 workspace_metadata.db
 audit.log
 
+# Claude Flow Runtime
+.swarm/
+
 # Generated Code (for testing)
 generated/
 output/
