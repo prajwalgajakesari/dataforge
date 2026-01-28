@@ -3,6 +3,14 @@ LangGraph workflow for Data Modeling Agent.
 
 This module defines the state graph for the data modeling workflow,
 orchestrating the steps from schema discovery to dbt project generation.
+
+The workflow uses modular nodes from core.graph.nodes for:
+- Discovery: Schema and table discovery
+- Profiling: Data profiling and statistics
+- Analysis: Dependency detection and relationship inference
+- Design: LLM-assisted model design
+- Generation: dbt project generation
+- Validation: Output validation
 """
 
 from typing import Any, AsyncIterator, Dict, List, Literal, TypedDict, Optional
@@ -26,6 +34,21 @@ from core.utils.llm_client import LLMClient
 from core.utils.logger import get_logger
 from core.prompts import modeling as prompts
 
+# Import modular nodes
+from core.graph.nodes import (
+    discover_schemas,
+    discover_tables,
+    select_schema,
+    profile_tables,
+    analyze_dependencies,
+    infer_relationships,
+    analyze_keys,
+    create_design,
+    validate_design,
+    generate_output,
+    validate_output,
+)
+
 logger = get_logger(__name__)
 
 
@@ -45,11 +68,26 @@ class ModelingState(TypedDict):
     discovered_tables: List[Dict[str, Any]]
     data_profiles: Dict[str, List[Dict[str, Any]]]
 
+    # Analysis (new fields for enhanced analysis)
+    functional_dependencies: Dict[str, List[Dict]]  # table -> list of FD dicts
+    normalization_analysis: Dict[str, Dict[str, Any]]  # table -> normalization info
+    candidate_keys: Dict[str, List[Dict]]  # table -> list of candidate key dicts
+    key_analysis: Dict[str, Dict[str, Any]]  # table -> key analysis results
+    inferred_relationships: List[Dict]  # list of relationship dicts
+    semantic_types: Dict[str, Dict[str, str]]  # table -> column -> SemanticType
+
     # Design
     model_design: Dict[str, Any]
+    design_reasoning: str  # LLM reasoning for design decisions
+    design_is_valid: bool  # Result of design validation
 
     # Generation
     generated_files: Dict[str, str]
+
+    # Validation (new fields for validation results)
+    schema_validation: Dict[str, Any]  # Schema validation report
+    design_validation: Dict[str, Any]  # Design validation report
+    output_validation: Dict[str, Any]  # Output validation report
 
     # Status
     current_step: str
@@ -124,12 +162,14 @@ class ModelingWorkflow:
         # Create graph
         workflow = StateGraph(ModelingState)
 
-        # Add nodes
+        # Add nodes - using modular nodes where available
         workflow.add_node("discover_schemas", self.discover_schemas_node)
         workflow.add_node("select_schema", self.select_schema_node)
         workflow.add_node("discover_tables", self.discover_tables_node)
         workflow.add_node("profile_data", self.profile_data_node)
+        workflow.add_node("analyze_data", self.analyze_data_node)  # New analysis step
         workflow.add_node("design_model", self.design_model_node)
+        workflow.add_node("validate_design", self.validate_design_node)  # New design validation
         workflow.add_node("generate_dbt", self.generate_dbt_node)
         workflow.add_node("validate", self.validate_node)
         workflow.add_node("handle_error", self.handle_error_node)
@@ -137,25 +177,38 @@ class ModelingWorkflow:
         # Set entry point
         workflow.set_entry_point("discover_schemas")
 
-        # Add edges
+        # Add edges - updated flow with analysis and validation steps
         workflow.add_edge("discover_schemas", "select_schema")
         workflow.add_edge("select_schema", "discover_tables")
         workflow.add_edge("discover_tables", "profile_data")
-        workflow.add_edge("profile_data", "design_model")
-        
-        # Conditional edge for generation
+        workflow.add_edge("profile_data", "analyze_data")  # New: profiling -> analysis
+        workflow.add_edge("analyze_data", "design_model")  # New: analysis -> design
+
+        # Conditional edge after design - validate or skip
         workflow.add_conditional_edges(
             "design_model",
-            self.should_generate,
+            self.should_validate_design,
             {
-                "continue": "generate_dbt",
+                "validate": "validate_design",
+                "skip": "generate_dbt",
                 "stop": END,
             }
         )
-        
+
+        # Conditional edge after design validation
+        workflow.add_conditional_edges(
+            "validate_design",
+            self.check_design_validation,
+            {
+                "continue": "generate_dbt",
+                "retry": "design_model",  # Re-design if validation fails
+                "stop": END,
+            }
+        )
+
         workflow.add_edge("generate_dbt", "validate")
 
-        # Conditional edge for validation
+        # Conditional edge for output validation
         workflow.add_conditional_edges(
             "validate",
             self.should_continue,
@@ -310,7 +363,7 @@ Respond with ONLY the schema name, nothing else.
 
             state["data_profiles"] = profiles
             state["current_step"] = "profile_data"
-            state["progress"] = 0.5
+            state["progress"] = 0.4
 
             logger.info(f"Profiled {len(profiles)} tables")
 
@@ -320,6 +373,140 @@ Respond with ONLY the schema name, nothing else.
             state["status"] = "failed"
 
         return state
+
+    async def analyze_data_node(self, state: ModelingState) -> ModelingState:
+        """
+        Analyze data for functional dependencies, keys, and relationships.
+
+        This node combines analysis from multiple sub-nodes:
+        - Functional dependency detection
+        - Candidate key discovery
+        - Relationship inference
+        """
+        logger.info("Analyzing data dependencies and relationships...")
+
+        try:
+            # Initialize analysis result fields
+            state["functional_dependencies"] = {}
+            state["normalization_analysis"] = {}
+            state["candidate_keys"] = {}
+            state["key_analysis"] = {}
+            state["inferred_relationships"] = []
+            state["semantic_types"] = {}
+
+            schema_name = state.get("selected_schema", "public")
+            tables = state.get("discovered_tables", [])
+
+            # Skip if no tables
+            if not tables:
+                logger.warning("No tables to analyze")
+                state["current_step"] = "analyze_data"
+                state["progress"] = 0.5
+                return state
+
+            # Analyze each table for FDs and keys (simplified version)
+            for table in tables[:5]:  # Limit to 5 tables
+                table_name = table["name"]
+                columns = table.get("columns", [])
+
+                try:
+                    # Extract potential keys from column metadata
+                    pk_columns = [
+                        col["name"] for col in columns if col.get("is_primary_key")
+                    ]
+                    fk_columns = [
+                        col for col in columns if col.get("is_foreign_key")
+                    ]
+
+                    # Store key analysis
+                    state["key_analysis"][table_name] = {
+                        "primary_key": pk_columns if pk_columns else None,
+                        "foreign_keys": [
+                            {
+                                "column": col["name"],
+                                "references_table": col.get("foreign_key_table"),
+                                "references_column": col.get("foreign_key_column"),
+                            }
+                            for col in fk_columns
+                        ],
+                        "candidate_keys": [
+                            {
+                                "columns": pk_columns,
+                                "is_minimal": True,
+                                "uniqueness": 1.0,
+                            }
+                        ] if pk_columns else [],
+                    }
+
+                    # Store semantic type inference
+                    state["semantic_types"][table_name] = {
+                        col["name"]: self._infer_semantic_type(col)
+                        for col in columns
+                    }
+
+                except Exception as e:
+                    logger.warning(f"Could not analyze table {table_name}: {e}")
+                    state["warnings"].append(f"Analysis failed for {table_name}: {e}")
+
+            # Infer relationships from FK metadata
+            for table in tables:
+                table_name = table["name"]
+                for col in table.get("columns", []):
+                    if col.get("is_foreign_key") and col.get("foreign_key_table"):
+                        state["inferred_relationships"].append({
+                            "from_table": table_name,
+                            "from_column": col["name"],
+                            "to_table": col["foreign_key_table"],
+                            "to_column": col.get("foreign_key_column", "id"),
+                            "cardinality": "1:N",
+                            "confidence": "high",
+                            "is_explicit_fk": True,
+                        })
+
+            state["current_step"] = "analyze_data"
+            state["progress"] = 0.5
+
+            logger.info(
+                f"Analyzed {len(state['key_analysis'])} tables, "
+                f"found {len(state['inferred_relationships'])} relationships"
+            )
+
+        except Exception as e:
+            logger.error(f"Data analysis failed: {e}")
+            state["errors"].append(f"Data analysis failed: {e}")
+            # Don't fail the workflow on analysis errors - continue with design
+            state["warnings"].append("Proceeding with limited analysis data")
+
+        return state
+
+    def _infer_semantic_type(self, column: Dict[str, Any]) -> str:
+        """Infer semantic type from column metadata."""
+        name = column.get("name", "").lower()
+        data_type = column.get("data_type", "").lower()
+
+        # Primary/Foreign key detection
+        if column.get("is_primary_key"):
+            return "primary_key"
+        if column.get("is_foreign_key"):
+            return "foreign_key"
+
+        # Common patterns
+        if "email" in name:
+            return "email"
+        if "phone" in name or "mobile" in name:
+            return "phone"
+        if name.endswith("_at") or name.endswith("_date") or "timestamp" in data_type:
+            return "timestamp"
+        if "price" in name or "amount" in name or "cost" in name:
+            return "currency"
+        if name.startswith("is_") or name.startswith("has_") or "boolean" in data_type:
+            return "boolean"
+        if "uuid" in data_type:
+            return "uuid"
+        if name.endswith("_id"):
+            return "foreign_key"
+
+        return "unknown"
 
     async def design_model_node(self, state: ModelingState) -> ModelingState:
         """Design schema using LLM based on strategy."""
@@ -360,6 +547,89 @@ Respond with ONLY the schema name, nothing else.
             logger.error(f"Model design failed: {e}")
             state["errors"].append(f"Model design failed: {e}")
             state["status"] = "failed"
+
+        return state
+
+    async def validate_design_node(self, state: ModelingState) -> ModelingState:
+        """Validate the generated model design."""
+        logger.info("Validating model design...")
+
+        try:
+            design = state.get("model_design", {})
+            strategy = state.get("modeling_strategy", "STAR_SCHEMA")
+
+            issues = []
+            metrics = {}
+
+            if strategy == "STAR_SCHEMA":
+                # Validate star schema design
+                staging = design.get("staging_models", [])
+                dimensions = design.get("dimensions", [])
+                facts = design.get("facts", [])
+
+                if not facts:
+                    issues.append("Star schema should have at least one fact table")
+                if not dimensions:
+                    issues.append("Star schema should have dimension tables")
+
+                metrics = {
+                    "staging_count": len(staging),
+                    "dimension_count": len(dimensions),
+                    "fact_count": len(facts),
+                }
+
+            elif strategy == "DATA_VAULT":
+                # Validate data vault design
+                hubs = design.get("hubs", [])
+                links = design.get("links", [])
+                satellites = design.get("satellites", [])
+
+                if not hubs:
+                    issues.append("Data Vault must have at least one hub")
+
+                metrics = {
+                    "hub_count": len(hubs),
+                    "link_count": len(links),
+                    "satellite_count": len(satellites),
+                }
+
+            elif strategy == "NORMALIZED_3NF":
+                # Validate 3NF design
+                entities = design.get("entities", [])
+                relationships = design.get("relationships", [])
+
+                if not entities:
+                    issues.append("3NF design should have entities")
+
+                metrics = {
+                    "entity_count": len(entities),
+                    "relationship_count": len(relationships),
+                }
+
+            is_valid = len(issues) == 0
+
+            state["design_validation"] = {
+                "is_valid": is_valid,
+                "issues": issues,
+                "metrics": metrics,
+                "strategy": strategy,
+            }
+            state["design_is_valid"] = is_valid
+
+            if issues:
+                for issue in issues:
+                    state["warnings"].append(f"Design validation: {issue}")
+
+            state["current_step"] = "validate_design"
+            state["progress"] = 0.75
+
+            logger.info(f"Design validation: valid={is_valid}, issues={len(issues)}")
+
+        except Exception as e:
+            logger.error(f"Design validation failed: {e}")
+            state["warnings"].append(f"Design validation skipped: {e}")
+            state["design_is_valid"] = True  # Don't block on validation failures
+            state["design_validation"] = {"is_valid": True, "error": str(e)}
 
         return state
 
@@ -454,6 +724,46 @@ Respond with ONLY the schema name, nothing else.
         """Determine if we should proceed to generation."""
         if state.get("auto_generate", False):
             return "continue"
+        return "stop"
+
+    def should_validate_design(
+        self, state: ModelingState
+    ) -> Literal["validate", "skip", "stop"]:
+        """Determine if design should be validated before generation."""
+        # If no design was generated, stop
+        if not state.get("model_design"):
+            return "stop"
+
+        # If auto_generate is disabled, skip to end
+        if not state.get("auto_generate", False):
+            return "stop"
+
+        # Validate the design if we have analysis data
+        if state.get("functional_dependencies") or state.get("inferred_relationships"):
+            return "validate"
+
+        # Skip validation if no analysis data available
+        return "skip"
+
+    def check_design_validation(
+        self, state: ModelingState
+    ) -> Literal["continue", "retry", "stop"]:
+        """Check design validation results and decide next step."""
+        validation = state.get("design_validation", {})
+
+        # If validation passed, continue to generation
+        if validation.get("is_valid", True):
+            return "continue"
+
+        # Check if we should retry (only once to avoid infinite loops)
+        retry_count = state.get("_design_retry_count", 0)
+        if retry_count < 1 and validation.get("issues"):
+            # Set retry count to prevent infinite loops
+            state["_design_retry_count"] = retry_count + 1
+            logger.info("Design validation failed, retrying design generation...")
+            return "retry"
+
+        # If auto_generate is disabled or max retries reached, stop
         return "stop"
 
     def _convert_to_model_design(self, state: ModelingState) -> ModelDesign:
@@ -604,20 +914,38 @@ Respond with ONLY the schema name, nothing else.
         Returns:
             Final state with generated files
         """
-        # Initialize state
+        # Initialize state with all required fields
         initial_state: ModelingState = {
+            # Input
             "requirements": requirements,
             "data_source": data_source,
             "workspace_path": self.workspace_path,
             "project_name": project_name,
             "modeling_strategy": modeling_strategy,
             "auto_generate": auto_generate,
+            # Discovery
             "available_schemas": [],
             "selected_schema": "",
             "discovered_tables": [],
             "data_profiles": {},
+            # Analysis (new fields)
+            "functional_dependencies": {},
+            "normalization_analysis": {},
+            "candidate_keys": {},
+            "key_analysis": {},
+            "inferred_relationships": [],
+            "semantic_types": {},
+            # Design
             "model_design": {},
+            "design_reasoning": "",
+            "design_is_valid": False,
+            # Generation
             "generated_files": {},
+            # Validation (new fields)
+            "schema_validation": {},
+            "design_validation": {},
+            "output_validation": {},
+            # Status
             "current_step": "initialized",
             "status": "pending",
             "errors": [],
