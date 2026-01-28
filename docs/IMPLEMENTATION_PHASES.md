@@ -3,6 +3,59 @@
 > **Project**: Auto Schema Creation System Revamp
 > **Goal**: Transform raw data into properly normalized schemas using data engineering best practices
 > **Created**: January 2026
+> **Cross-Checked**: Against existing codebase on Jan 28, 2026
+
+---
+
+## Current Codebase Analysis
+
+### Existing Files to Preserve/Enhance
+
+| File | Lines | Action | Notes |
+|------|-------|--------|-------|
+| `core/graph/modeling_graph.py` | 690 | **Enhance** | Add analysis nodes, keep existing workflow |
+| `core/mcp/servers/postgres_mcp.py` | 592 | **Enhance** | Extend DataProfile, add pattern methods |
+| `core/generators/dbt_generator.py` | 793 | **Enhance** | Fix placeholders at L377-381, L437-441 |
+| `core/prompts/modeling.py` | 143 | **Enhance** | Remove limits (L121, L135-137), add analysis |
+| `core/validators/__init__.py` | 0 | **Replace** | Currently empty |
+| `core/agents/modeling.py` | 414 | **Keep** | Works as-is |
+
+### Existing Pydantic Models to Reuse
+
+From `postgres_mcp.py`:
+- `PostgresColumn`, `PostgresTable`, `PostgresSchema`, `DataProfile`
+
+From `dbt_generator.py`:
+- `ColumnDefinition`, `TableDefinition`, `SourceDefinition`
+- `StagingModelDefinition`, `DimensionModelDefinition`, `FactModelDefinition`, `ModelDesign`
+
+From `modeling_graph.py`:
+- `ModelingState`, `StarSchemaDesign`, `NormalizedDesign`, `DataVaultDesign`
+
+### Key Code Issues to Fix
+
+1. **L370-376** `modeling_graph.py`: 3NF/DataVault generation skipped
+2. **L377-381, L437-441** `dbt_generator.py`: Placeholder join logic
+3. **L121** `prompts/modeling.py`: Limited to 15 columns
+4. **L135-137** `prompts/modeling.py`: Limited to 3 tables, 5 profiles
+
+### API Layer Issues (server.py)
+
+| Issue | Location | Problem |
+|-------|----------|---------|
+| Monolithic | `api/server.py` | All routes in one file (227 lines) |
+| In-memory sessions | L127 | `modeling_sessions: Dict[str, Any] = {}` - not production ready |
+| No step control | L171-176 | `workflow.run()` executes entire workflow at once |
+| Missing endpoints | - | No separate discovery, profiling, analysis, validation endpoints |
+| Empty routes module | `api/routes/__init__.py` | 0 bytes - unused |
+
+### CLI Issues (interfaces/cli/main.py)
+
+| Issue | Location | Problem |
+|-------|----------|---------|
+| Chat not implemented | L97-107 | `# TODO: Implement interactive chat` |
+| No modeling commands | - | Only workspace management |
+| No MCP status | L132 | `# MCP servers status coming soon...` |
 
 ---
 
@@ -20,6 +73,122 @@ Current State                          Target State
 │ Generate │                           │ (with algorithmic analysis)     │
 └──────────┘                           └──────────────────────────────────┘
 ```
+
+---
+
+## Phase 0: API & Router Restructuring
+
+### Objective
+Clean up the monolithic server.py, create modular routers, add step-by-step workflow endpoints, and implement proper session management.
+
+### Current State
+```
+api/
+├── __init__.py           # Empty
+├── server.py             # 227 lines - ALL routes here
+└── routes/
+    └── __init__.py       # Empty (0 bytes)
+```
+
+### Target State
+```
+api/
+├── __init__.py
+├── server.py             # App setup only (~50 lines)
+├── dependencies.py       # Shared dependencies (MCP registry, session store)
+├── models/               # NEW: Request/Response models
+│   ├── __init__.py
+│   ├── modeling.py       # Modeling request/response schemas
+│   └── common.py         # Shared schemas (errors, pagination)
+├── routes/               # EXPAND: Modular routers
+│   ├── __init__.py       # Router aggregation
+│   ├── health.py         # Health & capabilities
+│   ├── mcp.py            # MCP server management
+│   └── modeling/         # NEW: Modeling sub-routes
+│       ├── __init__.py
+│       ├── discovery.py  # Schema discovery endpoints
+│       ├── profiling.py  # Data profiling endpoints
+│       ├── analysis.py   # FD/key analysis endpoints (Phase 2+)
+│       ├── design.py     # Model design endpoints
+│       ├── generation.py # Code generation endpoints
+│       └── sessions.py   # Session management
+└── services/             # NEW: Business logic layer
+    ├── __init__.py
+    ├── session_store.py  # Redis/DB session storage
+    └── workflow_service.py # Workflow orchestration
+```
+
+### Tasks
+
+#### 0.1 Create API Models (`api/models/`)
+- [ ] **common.py**: `ErrorResponse`, `PaginatedResponse`, `StatusResponse`
+- [ ] **modeling.py**:
+  - `CreateSessionRequest` (replace CreateProjectRequest)
+  - `SessionResponse`
+  - `DiscoveryRequest`, `DiscoveryResponse`
+  - `ProfileRequest`, `ProfileResponse`
+  - `DesignRequest`, `DesignResponse`
+  - `GenerateRequest`, `GenerateResponse`
+  - `ValidationResponse`
+
+#### 0.2 Create Session Store (`api/services/session_store.py`)
+- [ ] Abstract `SessionStore` interface
+- [ ] `InMemorySessionStore` (for dev)
+- [ ] `RedisSessionStore` (for prod) - interface only, impl later
+- [ ] Session serialization/deserialization
+- [ ] Session TTL and cleanup
+
+#### 0.3 Create Modular Routers
+- [ ] **health.py**: Move `/`, `/health`, `/api/v1/capabilities` from server.py
+- [ ] **mcp.py**: Move `/api/v1/servers`, add MCP management endpoints
+- [ ] **modeling/sessions.py**:
+  - `POST /api/v1/modeling/sessions` - Create session
+  - `GET /api/v1/modeling/sessions/{id}` - Get session
+  - `DELETE /api/v1/modeling/sessions/{id}` - Delete session
+- [ ] **modeling/discovery.py**:
+  - `POST /api/v1/modeling/sessions/{id}/discover` - Run discovery only
+  - `GET /api/v1/modeling/sessions/{id}/schemas` - Get discovered schemas
+  - `GET /api/v1/modeling/sessions/{id}/tables` - Get discovered tables
+- [ ] **modeling/profiling.py**:
+  - `POST /api/v1/modeling/sessions/{id}/profile` - Run profiling
+  - `GET /api/v1/modeling/sessions/{id}/profiles` - Get profiles
+- [ ] **modeling/design.py**:
+  - `POST /api/v1/modeling/sessions/{id}/design` - Generate design
+  - `PUT /api/v1/modeling/sessions/{id}/design` - Update design (manual edits)
+  - `GET /api/v1/modeling/sessions/{id}/design` - Get current design
+- [ ] **modeling/generation.py**:
+  - `POST /api/v1/modeling/sessions/{id}/generate` - Generate code
+  - `GET /api/v1/modeling/sessions/{id}/files` - Get generated files
+  - `GET /api/v1/modeling/sessions/{id}/files/{path}` - Get specific file
+
+#### 0.4 Refactor server.py
+- [ ] Keep only app setup and middleware
+- [ ] Import and include routers
+- [ ] Move session store to dependency injection
+- [ ] Add proper exception handlers
+
+#### 0.5 Remove/Deprecate Old Endpoints
+- [ ] Remove inline route definitions from server.py
+- [ ] Add deprecation warnings if needed for backward compat
+
+### Commit Milestone
+```
+refactor(api): restructure API with modular routers and step-by-step endpoints
+
+- Extract routes into modular router files
+- Add request/response models in api/models/
+- Add session store service with interface for Redis
+- Create step-by-step modeling endpoints (discovery, profile, design, generate)
+- Keep server.py minimal (app setup only)
+- Add proper error handling and validation
+```
+
+### Success Criteria
+- [ ] server.py reduced to <60 lines
+- [ ] All routes accessible via modular routers
+- [ ] Step-by-step workflow endpoints working
+- [ ] Session state persisted correctly
+- [ ] API documentation auto-generated (Swagger/OpenAPI)
 
 ---
 
@@ -465,18 +634,92 @@ sqlparse = "^0.4"          # SQL validation
 
 ---
 
+## Phase 7: CLI Enhancement
+
+### Objective
+Align CLI with new API capabilities, implement the chat interface, and add modeling commands.
+
+### Current State (interfaces/cli/main.py - 142 lines)
+```
+Commands:
+- version     ✓ Working
+- init        ✓ Working (workspace)
+- list        ✓ Working (workspaces)
+- chat        ✗ Not implemented ("coming soon")
+- status      ~ Partial (no MCP status)
+```
+
+### Target State
+```
+Commands:
+- version           Show version
+- init              Create workspace
+- list              List workspaces
+- status            Full status with MCP servers
+- chat              Interactive AI chat (implement)
+- modeling          Subcommand group:
+  - discover        Discover schemas
+  - profile         Profile tables
+  - design          Generate design
+  - generate        Generate code
+  - run             Full pipeline
+- mcp               Subcommand group:
+  - list            List MCP servers
+  - add             Add MCP server
+  - test            Test MCP connection
+```
+
+### Tasks
+
+#### 7.1 Implement Chat Command
+- [ ] Interactive prompt loop with rich formatting
+- [ ] Connect to DataModelingAgent
+- [ ] Stream responses
+- [ ] Context persistence
+
+#### 7.2 Add Modeling Commands
+- [ ] `dataforge modeling discover --source postgres`
+- [ ] `dataforge modeling profile --schema public --table users`
+- [ ] `dataforge modeling design --strategy star_schema`
+- [ ] `dataforge modeling generate --output ./dbt_project`
+- [ ] `dataforge modeling run` (full pipeline)
+
+#### 7.3 Add MCP Commands
+- [ ] `dataforge mcp list`
+- [ ] `dataforge mcp add postgres --host localhost`
+- [ ] `dataforge mcp test postgres`
+
+#### 7.4 Fix Status Command
+- [ ] Add MCP server status
+- [ ] Add workflow status
+- [ ] Add resource usage
+
+### Commit Milestone
+```
+feat(cli): implement chat, modeling, and MCP commands
+
+- Implement interactive chat with AI agent
+- Add modeling command group for step-by-step control
+- Add MCP server management commands
+- Enhance status command with full system info
+```
+
+---
+
 ## Execution Timeline
 
 | Phase | Duration | Agents | Parallel Tasks |
 |-------|----------|--------|----------------|
+| Phase 0 | 1-2 days | 3-4 | API models, Session store, Routers, Server refactor |
 | Phase 1 | 2-3 days | 3-4 | Models, Profiler, Types |
 | Phase 2 | 3-4 days | 4-5 | Pattern, Type, FD, Key, Relationship |
 | Phase 3 | 2-3 days | 3-4 | Violations, Decomposer, Normalizers |
 | Phase 4 | 3-4 days | 4-5 | Join, Star, 3NF, DataVault, dbt |
 | Phase 5 | 2-3 days | 4 | Schema, Data, Design, Output validators |
-| Phase 6 | 2-3 days | 3-4 | Nodes, Graph, Prompts, API |
+| Phase 6 | 2-3 days | 3-4 | Nodes, Graph, Prompts, Integration |
+| Phase 7 | 1-2 days | 2-3 | Chat, Modeling CLI, MCP CLI |
 
-**Total Estimated: 14-20 days with parallel agent execution**
+**Total Estimated: 15-23 days with parallel agent execution**
 
 ---
 
