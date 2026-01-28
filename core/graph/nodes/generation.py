@@ -558,3 +558,33 @@ def get_file_by_category(
             for path, content in generated_files.items()
             if pattern in path
         }
+
+
+def write_files_to_disk(
+    state: "ModelingState",
+    output_dir: Optional[str] = None,
+) -> List[str]:
+    """
+    Write generated files to disk.
+
+    Args:
+        state: ModelingState with generated_files populated
+        output_dir: Target directory (defaults to workspace_path from state)
+
+    Returns:
+        List of written file paths
+    """
+    output_path = Path(output_dir or state.get("workspace_path", "./output"))
+    files = state.get("generated_files", {})
+
+    written = []
+
+    for file_path, content in files.items():
+        full_path = output_path / file_path
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+        full_path.write_text(content)
+        written.append(str(full_path))
+        logger.debug(f"Wrote: {full_path}")
+
+    logger.info(f"Wrote {len(written)} files to {output_path}")
+    return written

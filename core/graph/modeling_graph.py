@@ -514,7 +514,7 @@ Respond with ONLY the schema name, nothing else.
 
         try:
             strategy = state["modeling_strategy"]
-            
+
             if strategy == "NORMALIZED_3NF":
                 prompt = prompts.build_normalized_3nf_prompt(state)
                 response_model = NormalizedDesign
@@ -529,6 +529,9 @@ Respond with ONLY the schema name, nothing else.
                 response_model = StarSchemaDesign
                 system = "You are an expert data modeler specializing in dimensional modeling and star schemas."
 
+            # Enhance prompt with analysis results if available
+            prompt = self._enhance_prompt_with_analysis(prompt, state)
+
             # Use LLM to design the model
             design, response = await self.llm_client.generate_structured(
                 prompt=prompt,
@@ -538,8 +541,9 @@ Respond with ONLY the schema name, nothing else.
             )
 
             logger.info(f"Model design reasoning: {design.reasoning}")
-            
+
             state["model_design"] = design.model_dump()
+            state["design_reasoning"] = design.reasoning
             state["current_step"] = "design_model"
             state["progress"] = 0.7
 
@@ -549,6 +553,53 @@ Respond with ONLY the schema name, nothing else.
             state["status"] = "failed"
 
         return state
+
+    def _enhance_prompt_with_analysis(
+        self, prompt: str, state: ModelingState
+    ) -> str:
+        """Enhance the design prompt with analysis results."""
+        additions = []
+
+        # Add relationship information
+        relationships = state.get("inferred_relationships", [])
+        if relationships:
+            rel_lines = ["## Inferred Relationships"]
+            for rel in relationships[:10]:  # Limit to 10
+                from_col = f"{rel['from_table']}.{rel['from_column']}"
+                to_col = f"{rel['to_table']}.{rel['to_column']}"
+                rel_type = "FK" if rel.get("is_explicit_fk") else "inferred"
+                rel_lines.append(f"- {from_col} -> {to_col} ({rel_type})")
+            if len(relationships) > 10:
+                rel_lines.append(f"  ... and {len(relationships) - 10} more")
+            additions.append("\n".join(rel_lines))
+
+        # Add key analysis summary
+        key_analysis = state.get("key_analysis", {})
+        if key_analysis:
+            key_lines = ["## Key Analysis"]
+            for table_name, analysis in key_analysis.items():
+                pk = analysis.get("primary_key")
+                if pk:
+                    key_lines.append(f"- {table_name}: PK = {', '.join(pk)}")
+            additions.append("\n".join(key_lines))
+
+        # Add semantic type hints
+        semantic_types = state.get("semantic_types", {})
+        if semantic_types:
+            type_lines = ["## Column Semantic Types"]
+            for table_name, columns in list(semantic_types.items())[:5]:
+                important_cols = [
+                    f"{col}: {stype}"
+                    for col, stype in columns.items()
+                    if stype not in ("unknown", "attribute")
+                ]
+                if important_cols:
+                    type_lines.append(f"- {table_name}: {', '.join(important_cols[:5])}")
+            additions.append("\n".join(type_lines))
+
+        if additions:
+            return prompt + "\n\n" + "\n\n".join(additions)
+        return prompt
 
     async def validate_design_node(self, state: ModelingState) -> ModelingState:
         """Validate the generated model design."""
@@ -980,19 +1031,38 @@ Respond with ONLY the schema name, nothing else.
         Yields:
             State updates at each step
         """
-        # Initialize state
+        # Initialize state with all required fields
         initial_state: ModelingState = {
+            # Input
             "requirements": requirements,
             "data_source": data_source,
             "workspace_path": self.workspace_path,
             "project_name": project_name,
             "modeling_strategy": modeling_strategy,
+            "auto_generate": False,  # Default for streaming
+            # Discovery
             "available_schemas": [],
             "selected_schema": "",
             "discovered_tables": [],
             "data_profiles": {},
+            # Analysis (new fields)
+            "functional_dependencies": {},
+            "normalization_analysis": {},
+            "candidate_keys": {},
+            "key_analysis": {},
+            "inferred_relationships": [],
+            "semantic_types": {},
+            # Design
             "model_design": {},
+            "design_reasoning": "",
+            "design_is_valid": False,
+            # Generation
             "generated_files": {},
+            # Validation (new fields)
+            "schema_validation": {},
+            "design_validation": {},
+            "output_validation": {},
+            # Status
             "current_step": "initialized",
             "status": "pending",
             "errors": [],
