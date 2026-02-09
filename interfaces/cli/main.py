@@ -484,7 +484,7 @@ def normalize(
         dataforge normalize analysis.yaml --target BCNF --output normalized.json
     """
     from core.normalization import ViolationDetector
-    from core.models.schema import Table, Column
+    from core.models.schema import Table as SchemaTable, Column
     from core.models.analysis import FunctionalDependency, CandidateKey
 
     console.print(f"\n[bold]Normalizing to {target}[/bold]\n")
@@ -503,7 +503,7 @@ def normalize(
             raise typer.Exit(1)
 
         # Parse tables from input
-        parsed_tables: List[Table] = []
+        parsed_tables: List[SchemaTable] = []
         fds_by_table: Dict[str, List[FunctionalDependency]] = {}
         keys_by_table: Dict[str, List[CandidateKey]] = {}
 
@@ -521,7 +521,7 @@ def normalize(
                         is_foreign_key=col_data.get("is_foreign_key", False),
                     ))
 
-                tbl = Table(
+                tbl = SchemaTable(
                     name=tbl_data.get("name"),
                     schema_name=tbl_data.get("schema", "public"),
                     columns=columns,
@@ -1146,7 +1146,7 @@ def validate(
                 validator = SchemaValidator()
 
                 for tbl_data in data.get("tables", []):
-                    from core.models.schema import Table, Column
+                    from core.models.schema import Table as SchemaTable, Column
                     columns = [
                         Column(
                             name=col.get("name"),
@@ -1156,7 +1156,7 @@ def validate(
                         )
                         for col in tbl_data.get("columns", [])
                     ]
-                    tbl = Table(
+                    tbl = SchemaTable(
                         name=tbl_data.get("name"),
                         schema_name=tbl_data.get("schema", "public"),
                         columns=columns,
@@ -1172,7 +1172,6 @@ def validate(
         elif validation_type == "design":
             try:
                 data = _load_json_or_yaml(path)
-                validator = DesignValidator()
 
                 from core.models.design import ModelDesign, ModelingStrategy
 
@@ -1188,6 +1187,8 @@ def validate(
                     ModelingStrategy.STAR_SCHEMA
                 )
 
+                validator = DesignValidator(design_strategy)
+
                 model_design = ModelDesign(
                     name=data.get("model_name", "Design"),
                     strategy=design_strategy,
@@ -1195,12 +1196,21 @@ def validate(
                     relationships=[],
                 )
 
-                report = validator.validate(model_design)
+                report = validator.validate_design(model_design)
 
                 result["is_valid"] = report.is_valid
-                result["errors"].extend([str(i) for i in report.critical_issues])
-                result["warnings"].extend([str(i) for i in report.issues])
-                result["info"].append(f"Score: {report.score}/100")
+                result["errors"].extend([
+                    str(i) for i in report.issues
+                    if i.severity.value == "error"
+                ])
+                result["warnings"].extend([
+                    str(i) for i in report.issues
+                    if i.severity.value == "warning"
+                ])
+                result["info"].extend([
+                    str(i) for i in report.issues
+                    if i.severity.value == "info"
+                ])
 
             except Exception as e:
                 result["errors"].append(f"Failed to validate design: {str(e)}")
@@ -1208,22 +1218,18 @@ def validate(
         elif validation_type == "output":
             try:
                 validator = OutputValidator()
+                report = validator.validate_output(file_path)
 
-                if file_path.is_dir():
-                    # Validate directory of files
-                    for sql_file in file_path.rglob("*.sql"):
-                        content = sql_file.read_text()
-                        report = validator.validate_sql(content)
-                        for issue in report.issues:
-                            target = result["errors"] if issue.severity == "error" else result["warnings"]
-                            target.append(f"{sql_file.name}: {issue.message}")
-                else:
-                    # Single file
-                    content = file_path.read_text()
-                    report = validator.validate_sql(content)
-                    for issue in report.issues:
-                        target = result["errors"] if issue.severity == "error" else result["warnings"]
-                        target.append(issue.message)
+                for issue in report.issues:
+                    if issue.severity.value in ("error", "critical"):
+                        result["errors"].append(f"{issue.file_path}: {issue.message}")
+                    elif issue.severity.value == "warning":
+                        result["warnings"].append(f"{issue.file_path}: {issue.message}")
+                    else:
+                        result["info"].append(f"{issue.file_path}: {issue.message}")
+
+                result["info"].append(f"Files validated: {report.total_files}")
+                result["info"].append(f"Valid files: {report.valid_files}")
 
             except Exception as e:
                 result["errors"].append(f"Failed to validate output: {str(e)}")

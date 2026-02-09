@@ -113,7 +113,7 @@ async def discover_schemas(
         )
 
     # Update session status
-    session.state["status"] = SessionStatus.RUNNING.value
+    session.state["status"] = SessionStatus.IN_PROGRESS.value
     session.state["current_step"] = "discovering_schemas"
     session.updated_at = datetime.utcnow()
 

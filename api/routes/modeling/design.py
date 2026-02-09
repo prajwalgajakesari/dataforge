@@ -81,7 +81,7 @@ async def generate_design(
         )
 
     # Update session status
-    state["status"] = SessionStatus.RUNNING.value
+    state["status"] = SessionStatus.IN_PROGRESS.value
     state["current_step"] = "designing_model"
     session.updated_at = datetime.utcnow()
 

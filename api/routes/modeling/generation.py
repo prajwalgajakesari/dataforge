@@ -241,7 +241,7 @@ async def generate_code(
         )
 
     # Update session status
-    state["status"] = SessionStatus.RUNNING.value
+    state["status"] = SessionStatus.IN_PROGRESS.value
     state["current_step"] = "generating_code"
     session.updated_at = datetime.utcnow()
 

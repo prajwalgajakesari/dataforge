@@ -102,7 +102,7 @@ async def profile_data(
         )
 
     # Update session status
-    state["status"] = SessionStatus.RUNNING.value
+    state["status"] = SessionStatus.IN_PROGRESS.value
     state["current_step"] = "profiling_data"
     session.updated_at = datetime.utcnow()
 
