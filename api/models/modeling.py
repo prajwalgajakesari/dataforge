@@ -182,12 +182,12 @@ class SessionListResponse(BaseModel):
 # Discovery Models
 # =============================================================================
 
-class DiscoveryRequest(BaseModel):
+class DiscoverRequest(BaseModel):
     """
     Request to discover schemas and tables from the data source.
     """
 
-    schema_pattern: Optional[str] = Field(
+    schema_filter: Optional[str] = Field(
         default=None,
         description="Regex pattern to filter schemas (e.g., 'public|staging')",
         examples=["public", "sales_*", "^(?!pg_).*$"]
@@ -201,12 +201,16 @@ class DiscoveryRequest(BaseModel):
         "json_schema_extra": {
             "examples": [
                 {
-                    "schema_pattern": "public|staging",
+                    "schema_filter": "public|staging",
                     "exclude_system": True
                 }
             ]
         }
     }
+
+
+# Alias for backwards compatibility
+DiscoveryRequest = DiscoverRequest
 
 
 class ColumnInfo(BaseModel):
@@ -336,9 +340,17 @@ class DiscoveryResponse(BaseModel):
     Response containing discovered schemas and tables.
     """
 
+    session_id: Optional[str] = Field(
+        default=None,
+        description="Session identifier"
+    )
     schemas: List[SchemaInfo] = Field(
         default_factory=list,
         description="List of discovered schemas"
+    )
+    selected_schema: Optional[str] = Field(
+        default=None,
+        description="The schema selected for analysis"
     )
     tables: List[TableInfo] = Field(
         default_factory=list,
@@ -349,10 +361,50 @@ class DiscoveryResponse(BaseModel):
         "json_schema_extra": {
             "examples": [
                 {
+                    "session_id": "550e8400-e29b-41d4-a716-446655440000",
                     "schemas": [
                         {"name": "public", "table_count": 10},
                         {"name": "staging", "table_count": 5}
                     ],
+                    "selected_schema": "public",
+                    "tables": [
+                        {
+                            "schema": "public",
+                            "name": "customers",
+                            "row_count": 50000,
+                            "columns": []
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+
+
+class TablesResponse(BaseModel):
+    """
+    Response containing discovered tables in a schema.
+    """
+
+    session_id: str = Field(
+        ...,
+        description="Session identifier"
+    )
+    schema_name: str = Field(
+        ...,
+        description="Name of the schema containing the tables"
+    )
+    tables: List[TableInfo] = Field(
+        default_factory=list,
+        description="List of discovered tables"
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "session_id": "550e8400-e29b-41d4-a716-446655440000",
+                    "schema_name": "public",
                     "tables": [
                         {
                             "schema": "public",
@@ -378,10 +430,10 @@ class ProfileRequest(BaseModel):
     Profiling analyzes data patterns, distributions, and quality metrics.
     """
 
-    schema_name: str = Field(
-        ...,
+    schema_name: Optional[str] = Field(
+        default=None,
         alias="schema",
-        description="Schema to profile",
+        description="Schema to profile (uses session's selected schema if not provided)",
         examples=["public", "sales"]
     )
     tables: Optional[List[str]] = Field(
@@ -707,3 +759,99 @@ class GenerateResponse(BaseModel):
             ]
         }
     }
+
+
+# =============================================================================
+# Additional Models (for API routes)
+# =============================================================================
+
+class DesignUpdateRequest(BaseModel):
+    """
+    Request to update a data model design.
+    """
+
+    design: Dict[str, Any] = Field(
+        ...,
+        description="Updated design specification"
+    )
+
+
+class ProfilingResponse(BaseModel):
+    """
+    Response containing profiling results.
+    """
+
+    session_id: str = Field(
+        ...,
+        description="Session identifier"
+    )
+    profiles: Dict[str, TableProfile] = Field(
+        default_factory=dict,
+        description="Map of table name to table profile"
+    )
+
+
+class GenerationResponse(BaseModel):
+    """
+    Response containing generation status and files.
+    """
+
+    session_id: str = Field(
+        ...,
+        description="Session identifier"
+    )
+    status: str = Field(
+        ...,
+        description="Generation status"
+    )
+    files: List[GeneratedFile] = Field(
+        default_factory=list,
+        description="List of generated files"
+    )
+    total_files: int = Field(
+        default=0,
+        ge=0,
+        description="Total number of files generated"
+    )
+    output_path: Optional[str] = Field(
+        default=None,
+        description="Path where files were written"
+    )
+
+
+class FileListResponse(BaseModel):
+    """
+    Response containing a list of generated file paths.
+    """
+
+    session_id: str = Field(
+        ...,
+        description="Session identifier"
+    )
+    files: List[str] = Field(
+        default_factory=list,
+        description="List of file paths"
+    )
+
+
+class FileContentResponse(BaseModel):
+    """
+    Response containing the content of a generated file.
+    """
+
+    session_id: str = Field(
+        ...,
+        description="Session identifier"
+    )
+    path: str = Field(
+        ...,
+        description="File path"
+    )
+    content: str = Field(
+        ...,
+        description="File content"
+    )
+    file_type: str = Field(
+        ...,
+        description="Type of file"
+    )

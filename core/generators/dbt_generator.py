@@ -299,13 +299,13 @@ class DBTGenerator:
     def _generate_staging_model(self, model: StagingModelDefinition) -> str:
         """Generate SQL for a staging model."""
         template = Template(
-            """{{config(
+            """{{ '{{' }} config(
     materialized='view',
     schema='staging'
-)}}
+) {{ '}}' }}
 
 with source as (
-    select * from {{ source('{{ source_name }}', '{{ table_name }}') }}
+    select * from {{ '{{' }} source('{{ source_name }}', '{{ table_name }}') {{ '}}' }}
 ),
 
 renamed as (
@@ -375,14 +375,14 @@ select * from renamed
                     join_clauses += f"\n    -- left join {join_alias} on <add join condition>"
 
         template = Template(
-            """{{config(
+            """{{ '{{' }} config(
     materialized='table',
     schema='{{ target_schema }}'
-)}}
+) {{ '}}' }}
 
 {% for source_model in source_models %}
 with {{ source_model.split('_')[1] if '_' in source_model else source_model }} as (
-    select * from {{ ref('{{ source_model }}') }}
+    select * from {{ '{{' }} ref('{{ source_model }}') {{ '}}' }}
 ){{ "," if not loop.last else "" }}
 {% endfor %}
 
@@ -461,14 +461,14 @@ select * from joined
                     join_clauses += f"\n    -- left join {join_alias} on <add join condition>"
 
         template = Template(
-            """{{config(
+            """{{ '{{' }} config(
     materialized='table',
     schema='{{ target_schema }}'
-)}}
+) {{ '}}' }}
 
 {% for source_model in source_models %}
 with {{ source_model.split('_')[1] if '_' in source_model else source_model }} as (
-    select * from {{ ref('{{ source_model }}') }}
+    select * from {{ '{{' }} ref('{{ source_model }}') {{ '}}' }}
 ){{ "," if not loop.last else "" }}
 {% endfor %}
 

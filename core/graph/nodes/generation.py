@@ -178,7 +178,8 @@ def _generate_basic_3nf_sql(entities: List[Dict[str, Any]]) -> Dict[str, str]:
         if pk_cols:
             col_defs.append(f"    PRIMARY KEY ({', '.join(pk_cols)})")
 
-        sql = f"CREATE TABLE {name} (\n{',\n'.join(col_defs)}\n);\n"
+        newline = '\n'
+        sql = f"CREATE TABLE {name} ({newline}{f',{newline}'.join(col_defs)}{newline});{newline}"
         files[f"ddl/{name}.sql"] = sql
 
     return files

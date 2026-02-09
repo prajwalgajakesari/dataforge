@@ -73,15 +73,15 @@ DataForge is built on a modern, agent-based architecture:
 - [uv](https://github.com/astral-sh/uv) - Fast Python package installer
 - Git
 - Anthropic API key (for Claude)
-- Access to at least one data source (Postgres, MySQL, Snowflake, etc.)
+- Access to at least one data source (PostgreSQL connection)
+- Node.js 18+ (only if running the web frontend)
 
 ### Installation
 
 ```bash
 # Install uv (if not already installed)
 curl -LsSf https://astral.sh/uv/install.sh | sh
-# Or on macOS/Linux: brew install uv
-# Or on Windows: powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+# Or on macOS: brew install uv
 
 # Clone the repository
 git clone https://github.com/your-org/dataforge.git
@@ -93,7 +93,7 @@ uv sync
 # Or install with development dependencies
 uv sync --extra dev
 
-# Activate the virtual environment (optional - uv run handles this)
+# Activate the virtual environment (optional - uv run handles this automatically)
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 ```
 
@@ -106,63 +106,191 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
 2. **Edit `.env` and add your credentials:**
    ```bash
-   # Required
+   # Required - your Anthropic API key
    ANTHROPIC_API_KEY=your_api_key_here
 
-   # Add credentials for your data sources
+   # Database connection (the database you want to model)
    POSTGRES_HOST=localhost
+   POSTGRES_PORT=5432
    POSTGRES_USER=postgres
    POSTGRES_PASSWORD=your_password
-   # ... etc
+   POSTGRES_DATABASE=your_database
    ```
 
 3. **Configure MCP servers** (optional):
 
    DataForge will create a default configuration at `~/.dataforge/mcp-servers.yml`.
-   Edit this file to enable the data sources you want to use.
+   Edit this file to register additional data sources.
 
-### Usage
+---
+
+## 🖥️ Running DataForge
+
+DataForge can be used in three ways: **CLI**, **API server**, or **Web UI**.
+
+### Option 1: CLI
+
+The CLI provides six commands for the full data modeling workflow:
 
 ```bash
-# Run commands with uv (no need to activate venv)
+# Check configuration and connected services
+uv run dataforge status
+
+# Start an interactive chat session for conversational modeling
 uv run dataforge chat
 
-# Or activate venv first
-source .venv/bin/activate
-dataforge chat
+# Analyze a database schema (profiling, FD detection, key discovery)
+uv run dataforge analyze postgresql://user:pass@localhost/mydb \
+  --schema public \
+  --output table
 
-# Use specific commands
+# Normalize a schema to a target normal form
+uv run dataforge normalize schema.json --target 3NF --verbose
+
+# Design a data model from requirements using LLM
+uv run dataforge design "Build a star schema for e-commerce analytics" \
+  --strategy STAR_SCHEMA \
+  --input analysis.json \
+  --output design.json
+
+# Generate dbt or SQL code from a design file
+uv run dataforge generate design.json --format dbt --output ./my_dbt_project
+
+# Validate a schema, design, or generated output
+uv run dataforge validate ./my_dbt_project --type output
+
+# Initialize a new workspace
 uv run dataforge init my-project --type dbt
-uv run dataforge generate model --source postgres --requirements "Create a customer analytics mart"
+
+# List existing workspaces
+uv run dataforge list
 ```
 
-### Example Workflow
+### Option 2: API Server (FastAPI)
 
 ```bash
-# 1. Initialize a new workspace
-uv run dataforge init sales-analytics --type dbt
+# Start the API server (runs at http://localhost:8000)
+uv run uvicorn api.server:app --reload
 
-# 2. Connect your data source (interactive)
-uv run dataforge source add postgres
+# Or run directly
+uv run python -m api.server
+```
 
-# 3. Generate models through conversation
-uv run dataforge chat
+Once running:
+- **Swagger docs**: http://localhost:8000/docs
+- **ReDoc**: http://localhost:8000/redoc
 
-> "I need a sales analytics data mart with customer dimensions and order facts"
+### Option 3: Web Frontend
 
-# DataForge will:
-# - Discover your database schemas
-# - Analyze the data
-# - Design an optimal star schema
-# - Generate dbt models
-# - Create documentation
-# - Commit everything to git
+```bash
+# Install frontend dependencies
+cd web
+npm install
 
-# 4. Review the generated code
-cd ~/dataforge-workspaces/sales-analytics
+# Start the dev server (runs at http://localhost:5173)
+npm run dev
+
+# Build for production
+npm run build
+```
+
+> **Note:** The web frontend requires the API server to be running.
+
+---
+
+## 📖 Usage Workflows
+
+### End-to-End CLI Workflow
+
+```bash
+# Step 1: Analyze your database to profile tables, find keys and dependencies
+uv run dataforge analyze postgresql://user:pass@localhost/sales \
+  --schema public \
+  --output table \
+  --output-file analysis.json
+
+# Step 2: (Optional) Check normalization violations
+uv run dataforge normalize analysis.json --target 3NF --verbose
+
+# Step 3: Design a data model using LLM
+#   Strategies: STAR_SCHEMA, NORMALIZED_3NF, DATA_VAULT
+uv run dataforge design "Sales analytics mart with customer dimensions and order facts" \
+  --strategy STAR_SCHEMA \
+  --input analysis.json \
+  --output design.json
+
+# Step 4: Generate dbt project from the design
+uv run dataforge generate design.json --format dbt --output ./sales_dbt
+
+# Step 5: Validate the generated output
+uv run dataforge validate ./sales_dbt --type output
+
+# Step 6: Run your dbt project
+cd sales_dbt
 dbt run
 dbt test
 ```
+
+### API Workflow
+
+Use the REST API to drive the same pipeline programmatically:
+
+| Step | Method | Endpoint | Description |
+|------|--------|----------|-------------|
+| 1 | `POST` | `/api/v1/modeling/sessions/` | Create a session (project name, requirements, data source, strategy) |
+| 2 | `POST` | `/api/v1/modeling/sessions/{id}/discover` | Discover database schemas |
+| 3 | `GET` | `/api/v1/modeling/sessions/{id}/tables` | List discovered tables |
+| 4 | `POST` | `/api/v1/modeling/sessions/{id}/profile` | Profile data quality and statistics |
+| 5 | `POST` | `/api/v1/modeling/sessions/{id}/design` | Design model with LLM |
+| 6 | `POST` | `/api/v1/modeling/sessions/{id}/generate` | Generate dbt code |
+| 7 | `GET` | `/api/v1/modeling/sessions/{id}/files` | List generated files |
+| 8 | `GET` | `/api/v1/modeling/sessions/{id}/files/{path}` | Get file content |
+
+Example with `curl`:
+
+```bash
+# Create a session
+curl -X POST http://localhost:8000/api/v1/modeling/sessions/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "project_name": "sales_analytics",
+    "requirements": "Build a star schema for e-commerce sales",
+    "data_source": "postgres",
+    "modeling_strategy": "STAR_SCHEMA"
+  }'
+
+# Run discovery (replace SESSION_ID with the id from the response above)
+curl -X POST http://localhost:8000/api/v1/modeling/sessions/SESSION_ID/discover
+
+# Continue through profile -> design -> generate...
+```
+
+### Interactive Chat
+
+For a conversational experience:
+
+```bash
+uv run dataforge chat
+```
+
+Within the chat, describe what you need in plain English:
+> "I need a sales analytics data mart with customer dimensions and order facts"
+
+DataForge will walk through discovery, profiling, design, and generation interactively.
+
+### Modeling Strategies
+
+| Strategy | CLI Flag | What It Produces | dbt Generation |
+|----------|----------|------------------|----------------|
+| **Star Schema** | `STAR_SCHEMA` | Staging models, dimensions, fact tables | Supported |
+| **Normalized 3NF** | `NORMALIZED_3NF` | Entities + relationships | Design only |
+| **Data Vault 2.0** | `DATA_VAULT` | Hubs, links, satellites | Design only |
+
+### Output Formats
+
+The `generate` command supports:
+- **`dbt`** - Complete dbt project (models, sources, tests, docs, `dbt_project.yml`)
+- **`sql`** - Raw DDL `CREATE TABLE` statements
 
 ---
 
@@ -170,39 +298,71 @@ dbt test
 
 ```
 dataforge/
-├── core/                      # Core business logic
-│   ├── agents/               # AI agents for different tasks
-│   │   ├── base.py          # Base agent interface
-│   │   ├── modeling.py      # Data modeling agent
-│   │   └── ...
-│   ├── mcp/                  # MCP integration layer
-│   │   ├── registry.py      # MCP server registry
-│   │   ├── client.py        # Universal MCP client
-│   │   └── servers/         # Built-in MCP servers
-│   ├── workspace/            # Workspace management
-│   │   ├── manager.py       # File and git operations
-│   │   └── templates/       # Project templates
-│   ├── generators/           # Code generators
-│   │   ├── dbt_generator.py
-│   │   └── ...
-│   └── utils/                # Utilities
-│       ├── config.py        # Configuration
-│       └── logger.py        # Logging
+├── core/                          # Core business logic
+│   ├── agents/                   # AI agents (base + modeling)
+│   ├── analysis/                 # Data analysis modules
+│   │   ├── profiler.py          # Enhanced data profiling
+│   │   ├── fd_detector.py       # Functional dependency detection
+│   │   ├── key_finder.py        # Candidate key discovery
+│   │   ├── relationship_inferrer.py  # Relationship inference
+│   │   ├── pattern_detector.py  # Pattern detection
+│   │   └── type_inference.py    # Semantic type inference
+│   ├── normalization/            # Normalization engine
+│   │   ├── violations.py        # Violation detection (1NF-BCNF)
+│   │   ├── normalizer_1nf.py   # 1NF normalizer
+│   │   ├── normalizer_2nf.py   # 2NF normalizer
+│   │   ├── normalizer_3nf.py   # 3NF normalizer
+│   │   └── decomposer.py       # Table decomposition
+│   ├── generators/               # Code generators
+│   │   ├── dbt_generator.py     # dbt project generation
+│   │   ├── generator_3nf.py     # 3NF SQL generation
+│   │   └── generator_data_vault.py  # Data Vault generation
+│   ├── validators/               # Validation layer
+│   │   ├── schema_validator.py  # Schema validation
+│   │   ├── design_validator.py  # Design validation
+│   │   ├── output_validator.py  # Output validation
+│   │   └── data_validator.py    # Data validation
+│   ├── graph/                    # LangGraph workflow
+│   │   ├── modeling_graph.py    # Main workflow orchestration
+│   │   └── nodes/               # Modular graph nodes
+│   ├── mcp/                      # MCP integration layer
+│   │   ├── registry.py          # MCP server registry
+│   │   ├── client.py            # Universal MCP client
+│   │   └── servers/             # Built-in MCP servers (Postgres)
+│   ├── models/                   # Data models (Pydantic)
+│   ├── prompts/                  # LLM prompt templates
+│   ├── workspace/                # Workspace and git management
+│   └── utils/                    # Config, LLM client, logging
 │
-├── interfaces/               # User interfaces
-│   ├── cli/                 # Command-line interface
-│   └── ...
+├── interfaces/                    # User interfaces
+│   └── cli/                      # Typer CLI application
+│       ├── main.py              # CLI commands
+│       └── chat.py              # Interactive chat mode
 │
-├── api/                      # API server (FastAPI)
-│   ├── server.py
-│   └── routes/
+├── api/                           # REST API (FastAPI)
+│   ├── server.py                 # FastAPI app and lifespan
+│   ├── dependencies.py           # Dependency injection
+│   ├── models/                   # API request/response models
+│   └── routes/                   # API routes
+│       ├── modeling/            # Modeling endpoints
+│       │   ├── sessions.py     # Session CRUD
+│       │   ├── discovery.py    # Schema discovery
+│       │   ├── profiling.py    # Data profiling
+│       │   ├── design.py       # Model design
+│       │   └── generation.py   # Code generation
+│       └── health.py            # Health check
 │
-├── tests/                    # Test suite
+├── web/                           # React frontend (Vite + TypeScript)
+│   ├── src/                      # React source code
+│   └── package.json
+│
+├── tests/                         # Test suite
 │   ├── unit/
 │   ├── integration/
 │   └── e2e/
 │
-└── docs/                     # Documentation
+├── .env.example                   # Environment variable template
+└── pyproject.toml                 # Python project configuration
 ```
 
 ---
@@ -217,19 +377,18 @@ uv sync --all-extras
 
 # Install pre-commit hooks
 uv run pre-commit install
+```
 
-# Run tests
-uv run pytest
+### Running the Full Stack Locally
 
-# Run with coverage
-uv run pytest --cov=core --cov=interfaces --cov=api
+```bash
+# Terminal 1: Start the API server
+uv run uvicorn api.server:app --reload
+# -> http://localhost:8000 (Swagger at /docs)
 
-# Format code
-uv run black .
-uv run ruff check . --fix
-
-# Type checking
-uv run mypy core/ interfaces/ api/
+# Terminal 2: Start the web frontend
+cd web && npm install && npm run dev
+# -> http://localhost:5173
 ```
 
 ### Running Tests
@@ -244,19 +403,32 @@ uv run pytest tests/unit/test_agents.py
 # With verbose output
 uv run pytest -v
 
+# With coverage
+uv run pytest --cov=core --cov=interfaces --cov=api
+
 # Stop on first failure
 uv run pytest -x
+```
+
+### Code Quality
+
+```bash
+# Format code
+uv run black .
+uv run ruff check . --fix
+
+# Type checking
+uv run mypy core/ interfaces/ api/
 ```
 
 ### Building Documentation
 
 ```bash
 # Install docs dependencies
-pip install -e ".[docs]"
+uv sync --extra docs
 
 # Serve docs locally
-cd docs
-mkdocs serve
+cd docs && mkdocs serve
 
 # Build static site
 mkdocs build
@@ -339,29 +511,33 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 ## 📋 Roadmap
 
 ### Phase 1: MVP - Data Modeling (Current)
-- ✅ Core agent system (LangGraph)
-- ✅ MCP registry and client
-- ✅ Workspace manager
-- 🚧 Data modeling agent
-- 🚧 dbt generator
-- 🚧 CLI interface
-- 📅 DDL generator
-- 📅 Data profiling
-- 📅 Schema discovery
+- ✅ Core agent system (LangGraph workflow)
+- ✅ MCP registry and PostgreSQL client
+- ✅ Workspace manager with git integration
+- ✅ Schema discovery and table introspection
+- ✅ Data profiling (statistics, quality scores, semantic types)
+- ✅ Functional dependency detection and candidate key discovery
+- ✅ Normalization engine (1NF through BCNF violation detection)
+- ✅ LLM-powered model design (Star Schema, 3NF, Data Vault)
+- ✅ dbt project generation (Star Schema)
+- ✅ DDL/SQL generation
+- ✅ Validation layer (schema, design, output)
+- ✅ CLI with analyze, normalize, design, generate, validate, chat commands
+- ✅ REST API (FastAPI) with session-based workflow
+- ✅ React web frontend
 
-### Phase 2: Enhanced Capabilities (Q2 2025)
-- VSCode extension
-- Pipeline generation (Airflow)
-- 10+ MCP servers for various sources
-- Advanced modeling (Data Vault, OBT)
-- Visual lineage diagrams
+### Phase 2: Enhanced Capabilities
+- 📅 VSCode extension
+- 📅 Pipeline generation (Airflow)
+- 📅 Additional MCP servers (MySQL, Snowflake, BigQuery)
+- 📅 dbt generation for 3NF and Data Vault strategies
+- 📅 Visual lineage diagrams
 
-### Phase 3: Full Stack (Q3-Q4 2025)
-- Infrastructure automation (Terraform)
-- Web dashboard
-- Team collaboration features
-- CI/CD integration
-- Enterprise features
+### Phase 3: Full Stack
+- 📅 Infrastructure automation (Terraform)
+- 📅 Team collaboration features
+- 📅 CI/CD integration
+- 📅 Enterprise features
 
 ---
 
