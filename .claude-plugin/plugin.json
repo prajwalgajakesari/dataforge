@@ -1,0 +1,20 @@
+{
+  "name": "dataforge",
+  "version": "0.1.0",
+  "description": "Drive DataForge from Claude Code: profile a PostgreSQL schema, check normal forms, design star, 3NF or Data Vault models, and generate a dbt project.",
+  "author": {
+    "name": "Prajwal P",
+    "url": "https://github.com/prajwalgajakesari"
+  },
+  "homepage": "https://github.com/prajwalgajakesari/dataforge",
+  "repository": "https://github.com/prajwalgajakesari/dataforge",
+  "license": "MIT",
+  "keywords": [
+    "claude-code",
+    "plugin",
+    "data-engineering",
+    "dbt",
+    "data-modeling",
+    "mcp"
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "name": "dataforge",
+  "owner": {
+    "name": "Prajwal P",
+    "url": "https://github.com/prajwalgajakesari"
+  },
+  "plugins": [
+    {
+      "name": "dataforge",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/prajwalgajakesari/dataforge.git"
+      },
+      "description": "Drive DataForge from Claude Code: profile a PostgreSQL schema, check normal forms, design star, 3NF or Data Vault models, and generate a dbt project.",
+      "version": "0.1.0",
+      "homepage": "https://github.com/prajwalgajakesari/dataforge",
+      "license": "MIT",
+      "keywords": [
+        "data-engineering",
+        "dbt",
+        "data-modeling",
+        "star-schema",
+        "data-vault",
+        "mcp"
+      ]
+    }
+  ]
+}
