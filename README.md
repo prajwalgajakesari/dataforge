@@ -57,6 +57,12 @@ cp .env.example .env        # optional; set ANTHROPIC_API_KEY here for the desig
 uv run dataforge version
 ```
 
+No clone needed for a quick try; this runs the CLI straight from GitHub:
+
+```bash
+uvx --from git+https://github.com/prajwalgajakesari/dataforge dataforge version
+```
+
 First command, no database or API key needed:
 
 ```bash

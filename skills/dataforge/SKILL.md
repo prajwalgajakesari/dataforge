@@ -34,7 +34,8 @@ uv run --project "$DATAFORGE_HOME" dataforge status    # config summary; the key
 ```
 
 `uvx --from "$DATAFORGE_HOME" dataforge <command>` also works if you prefer an isolated tool
-environment.
+environment. Without any checkout, this runs the CLI straight from GitHub (verified):
+`uvx --from git+https://github.com/prajwalgajakesari/dataforge dataforge <command>`.
 
 `references/cli-reference.md` holds the full `--help` output of every command.
 `references/examples.md` shows the commands below with their real output.
