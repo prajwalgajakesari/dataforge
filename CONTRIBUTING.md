@@ -101,19 +101,11 @@ uv run pytest -m "not slow"
 
 ### Documentation
 
-```bash
-# Serve docs locally
-cd docs
-uv run mkdocs serve
-
-# Build docs
-uv run mkdocs build
-```
-
 **Documentation Guidelines:**
 - Update README.md for major changes
 - Add docstrings to all public APIs
-- Update relevant docs/ files
+- Update relevant docs/ files (`docs/getting-started.md` is the user guide)
+- If you change CLI behaviour, update `skills/dataforge/SKILL.md` and re-run its workflow
 - Include code examples where appropriate
 
 ## 🏗️ Project Structure
@@ -311,20 +303,19 @@ We are committed to providing a welcoming and inclusive experience for everyone.
 
 ### Enforcement
 
-Report issues to: conduct@dataforge.dev
+Report issues by opening a GitHub issue or contacting the maintainer through GitHub.
 
 ## 📚 Resources
 
-- [Architecture Documentation](docs/architecture.md)
-- [API Reference](docs/api_reference.md)
-- [Development Roadmap](plan.md)
-- [Project Setup](PROJECT_SETUP.md)
+- [Getting started](docs/getting-started.md)
+- [Implementation guide](docs/implementation-guide.md)
+- [Implementation phases](docs/implementation-phases.md)
+- [Schema normalization plan](docs/schema-normalization-plan.md)
+- [Claude Code skill](skills/dataforge/SKILL.md)
 
 ## ❓ Questions?
 
-- **GitHub Discussions**: For questions and discussions
-- **GitHub Issues**: For bugs and feature requests
-- **Email**: dev@dataforge.dev
+- **GitHub Issues**: For bugs, feature requests and questions
 
 ## 🙏 Thank You!
 

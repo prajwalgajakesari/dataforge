@@ -1,583 +1,217 @@
 # DataForge
 
-> **AI-Powered Data Engineering Platform**
+Profile a PostgreSQL schema, check its normal forms, ask Claude for a star schema, 3NF or
+Data Vault design, and generate a dbt project. From the terminal, or from Claude Code.
 
-DataForge is an intelligent data engineering platform that enables you to build complete data infrastructure through natural conversation. Generate production-ready dbt models, data pipelines, and infrastructure code using AI agents.
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue?style=flat-square)](pyproject.toml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
+[![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json&style=flat-square)](https://github.com/astral-sh/uv)
+[![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-d97757?style=flat-square)](skills/dataforge/SKILL.md)
+[![Status: alpha](https://img.shields.io/badge/status-alpha-orange?style=flat-square)](#status)
 
-**Think of it as "Claude Code for Data Engineers"**
+## What it does
 
----
+- **Profiles a live PostgreSQL schema** (`analyze`): row counts, null rates, distinct counts,
+  semantic types, functional dependencies and candidate keys, saved as JSON.
+- **Finds normal form violations** (`normalize`): array and JSON columns and repeating groups
+  (1NF), partial dependencies (2NF), transitive dependencies (3NF), non-superkey
+  determinants (BCNF).
+- **Designs a model with Claude** (`design`): star schema, normalized 3NF or Data Vault 2.0,
+  returned as a JSON design you can edit.
+- **Generates code** (`generate`): a complete dbt project for star schema designs (models,
+  sources, tests, docs, `dbt_project.yml`), or one `CREATE TABLE` file per table for any
+  strategy.
+- **Validates every artifact** (`validate`): schema files, design files, and generated
+  projects. The output validator parses SQL, checks `ref()` targets and YAML, and runs
+  `dbt compile` when dbt is installed.
+- **Works offline where it can**: `normalize`, `generate` and `validate` need neither a
+  database nor an API key.
+- Also included: a chat REPL, a FastAPI server with a session based flow, a LangGraph
+  workflow that chains the steps, and a Claude Code skill so Claude can run all of this.
 
-## 🎯 Vision
+## How it works
 
-Transform data engineering from manual, time-consuming work into a conversational, AI-driven experience. Describe your data needs in plain English, and DataForge generates production-ready code automatically.
-
-## ✨ Features
-
-### Phase 1: MVP - Data Modeling (Current)
-- 🤖 **AI-Powered Data Modeling**: Conversational interface to design dimensional models
-- 📊 **Automatic Schema Discovery**: Connect to databases and analyze schemas automatically
-- 🔍 **Data Profiling**: Profile data quality, patterns, and relationships
-- 🎨 **dbt Project Generation**: Generate complete dbt projects with models, tests, and docs
-- 🏗️ **Star Schema Design**: Automatically design facts and dimensions
-- 📝 **DDL Generation**: Create table definitions for your target warehouse
-- 🔄 **Git Integration**: All generated code is version controlled
-
-### Coming Soon
-- **Phase 2**: Pipeline generation (Airflow DAGs), VSCode extension
-- **Phase 3**: Infrastructure automation (Terraform), web dashboard, team collaboration
-
----
-
-## 🏗️ Architecture
-
-DataForge is built on a modern, agent-based architecture:
-
-```
-┌─────────────────────────────────────────────────┐
-│           Interface Layer                        │
-│   CLI · VSCode Extension · Web Dashboard         │
-└─────────────────┬───────────────────────────────┘
-                  │
-┌─────────────────▼───────────────────────────────┐
-│         Agent Orchestration (LangGraph)          │
-│   Modeling Agent · Pipeline Agent · Infra Agent │
-└─────────────────┬───────────────────────────────┘
-                  │
-┌─────────────────▼───────────────────────────────┐
-│         MCP Integration Layer                    │
-│   Postgres · MySQL · Snowflake · BigQuery       │
-│   dbt · Airflow · Git · Terraform                │
-└─────────────────┬───────────────────────────────┘
-                  │
-┌─────────────────▼───────────────────────────────┐
-│       Workspace Management                       │
-│   File System · Git Ops · Templates              │
-└──────────────────────────────────────────────────┘
+```text
+ input                 command      core module                          output
+ ---------------------- ----------  -----------------------------------  ----------------------
+ postgresql:// URL  --> analyze  -> core/analysis (profiler, fd_detector, -> analysis.json
+                                    key_finder)
+ analysis/schema.json > normalize-> core/normalization/violations         -> violation report
+ requirements + file -> design   -> core/prompts + core/utils/llm_client   -> design.json
+                                    (Anthropic API)
+ design.json        --> generate -> core/generators/dbt_generator or DDL -> dbt project / *.sql
+ any of the above   --> validate -> core/validators                       -> VALID / INVALID
 ```
 
-### Key Components
+The CLI (`interfaces/cli/main.py`, Typer) calls these modules directly. The same steps are
+wired into a LangGraph state machine in `core/graph/modeling_graph.py`, which the API and the
+example script use to run discovery, profiling, design and generation in one pass.
 
-- **Agents**: Specialized AI agents for different tasks (modeling, pipelines, infrastructure)
-- **MCP Integration**: Universal protocol for connecting to data sources and tools
-- **Workspace Manager**: File system and git operations for generated code
-- **Code Generators**: Template-based code generation for dbt, Airflow, Terraform
-
----
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-- Python 3.11 or higher
-- [uv](https://github.com/astral-sh/uv) - Fast Python package installer
-- Git
-- Anthropic API key (for Claude)
-- Access to at least one data source (PostgreSQL connection)
-- Node.js 18+ (only if running the web frontend)
-
-### Installation
+## Quick start
 
 ```bash
-# Install uv (if not already installed)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-# Or on macOS: brew install uv
-
-# Clone the repository
-git clone https://github.com/your-org/dataforge.git
+git clone https://github.com/prajwalgajakesari/dataforge.git
 cd dataforge
-
-# Install dependencies (uv automatically creates and manages virtual environment)
 uv sync
-
-# Or install with development dependencies
-uv sync --extra dev
-
-# Activate the virtual environment (optional - uv run handles this automatically)
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+cp .env.example .env        # optional; set ANTHROPIC_API_KEY here for the design step
+uv run dataforge version
 ```
 
-### Configuration
-
-1. **Copy the example environment file:**
-   ```bash
-   cp .env.example .env
-   ```
-
-2. **Edit `.env` and add your credentials:**
-   ```bash
-   # Required - your Anthropic API key
-   ANTHROPIC_API_KEY=your_api_key_here
-
-   # Database connection (the database you want to model)
-   POSTGRES_HOST=localhost
-   POSTGRES_PORT=5432
-   POSTGRES_USER=postgres
-   POSTGRES_PASSWORD=your_password
-   POSTGRES_DATABASE=your_database
-   ```
-
-3. **Configure MCP servers** (optional):
-
-   DataForge will create a default configuration at `~/.dataforge/mcp-servers.yml`.
-   Edit this file to register additional data sources.
-
----
-
-## 🖥️ Running DataForge
-
-DataForge can be used in three ways: **CLI**, **API server**, or **Web UI**.
-
-### Option 1: CLI
-
-The CLI provides six commands for the full data modeling workflow:
+First command, no database or API key needed:
 
 ```bash
-# Check configuration and connected services
-uv run dataforge status
-
-# Start an interactive chat session for conversational modeling
-uv run dataforge chat
-
-# Analyze a database schema (profiling, FD detection, key discovery)
-uv run dataforge analyze postgresql://user:pass@localhost/mydb \
-  --schema public \
-  --output table
-
-# Normalize a schema to a target normal form
-uv run dataforge normalize schema.json --target 3NF --verbose
-
-# Design a data model from requirements using LLM
-uv run dataforge design "Build a star schema for e-commerce analytics" \
-  --strategy STAR_SCHEMA \
-  --input analysis.json \
-  --output design.json
-
-# Generate dbt or SQL code from a design file
-uv run dataforge generate design.json --format dbt --output ./my_dbt_project
-
-# Validate a schema, design, or generated output
-uv run dataforge validate ./my_dbt_project --type output
-
-# Initialize a new workspace
-uv run dataforge init my-project --type dbt
-
-# List existing workspaces
-uv run dataforge list
+uv run dataforge normalize examples/sample_schema.json --target 3NF --verbose
 ```
 
-### Option 2: API Server (FastAPI)
+```text
+Normalizing to 3NF
+
++---------------------- Normalization Analysis -----------------------+
+| Current Normal Form: UNNORMALIZED                                   |
+| Target Normal Form: 3NF                                             |
+| Violations Found:                                                   |
+|   - 1NF: 1                                                          |
+|   - 2NF: 2                                                          |
+|   - 3NF: 1                                                          |
+|   - BCNF: 3                                                         |
++---------------------------------------------------------------------+
+                            2NF Violations
+| Table       | Type         | Description                                                  |
+| order_items | Violation2NF | 2NF Violation in order_items: {product_id} -> {product_name} |
+| order_items | Violation2NF | 2NF Violation in order_items: {order_id} -> {customer_id}    |
+```
+
+Then turn a design into a dbt project and validate it:
 
 ```bash
-# Start the API server (runs at http://localhost:8000)
-uv run uvicorn api.server:app --reload
-
-# Or run directly
-uv run python -m api.server
+uv run dataforge validate examples/sample_star_design.json --type design
+uv run dataforge generate examples/sample_star_design.json --format dbt --output ./out/sales_dbt
+uv run dataforge validate ./out/sales_dbt --type output
 ```
 
-Once running:
-- **Swagger docs**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
+The generated project parses with dbt 1.11 (`dbt deps` then `dbt parse`, using the included
+`.dbt/profiles.yml`). See [docs/getting-started.md](docs/getting-started.md) for the full
+walkthrough, including the database and Claude steps.
 
-### Option 3: Web Frontend
+## CLI reference
+
+| Command | Needs API key | Needs database | What it does |
+|---|---|---|---|
+| `dataforge analyze URL [--schema S] [--table T ...] [--output json\|yaml\|table] [--output-file F] [--sample-size N]` | no | PostgreSQL | Profile tables, detect FDs and candidate keys |
+| `dataforge normalize FILE [--target 1NF\|2NF\|3NF\|BCNF] [--verbose] [--output F]` | no | no | Report normal form violations and required steps |
+| `dataforge design "REQUIREMENTS or file" [--strategy STAR_SCHEMA\|NORMALIZED_3NF\|DATA_VAULT] [--input F] [--output F] [--model M]` | yes | no | Ask Claude for a design as JSON |
+| `dataforge generate DESIGN [--format dbt\|sql] [--output DIR] [--overwrite]` | no | no | Write a dbt project (star schema) or DDL files |
+| `dataforge validate PATH [--type schema\|design\|output] [--strict] [--output F]` | no | no | Validate a file or generated project; exit 1 when invalid |
+| `dataforge chat [--workspace DIR]` | yes | no | Interactive REPL with `/schema`, `/analyze`, `/design`, `/generate`, `/validate`, `/save`, `/load` |
+| `dataforge init NAME [--type dbt]` | no | no | Create a git initialised workspace under `DATAFORGE_WORKSPACE_DIR` |
+| `dataforge list` | no | no | List workspaces |
+| `dataforge status` | no | no | Show configuration; reports whether the API key is set |
+| `dataforge version` | no | no | Print the version |
+
+Full `--help` output for every command is in
+[skills/dataforge/references/cli-reference.md](skills/dataforge/references/cli-reference.md).
+
+## Use with Claude Code
+
+DataForge ships a Claude Code skill (`skills/dataforge/SKILL.md`) and plugin manifests.
+
+### 1. Clone and symlink (fastest, no marketplace needed)
 
 ```bash
-# Install frontend dependencies
-cd web
-npm install
-
-# Start the dev server (runs at http://localhost:5173)
-npm run dev
-
-# Build for production
-npm run build
+git clone https://github.com/prajwalgajakesari/dataforge ~/repos/dataforge
+(cd ~/repos/dataforge && uv sync)
+ln -s ~/repos/dataforge/skills/dataforge ~/.claude/skills/dataforge
 ```
 
-> **Note:** The web frontend requires the API server to be running.
+### 2. As a Claude Code plugin
 
----
-
-## 📖 Usage Workflows
-
-### End-to-End CLI Workflow
-
-```bash
-# Step 1: Analyze your database to profile tables, find keys and dependencies
-uv run dataforge analyze postgresql://user:pass@localhost/sales \
-  --schema public \
-  --output table \
-  --output-file analysis.json
-
-# Step 2: (Optional) Check normalization violations
-uv run dataforge normalize analysis.json --target 3NF --verbose
-
-# Step 3: Design a data model using LLM
-#   Strategies: STAR_SCHEMA, NORMALIZED_3NF, DATA_VAULT
-uv run dataforge design "Sales analytics mart with customer dimensions and order facts" \
-  --strategy STAR_SCHEMA \
-  --input analysis.json \
-  --output design.json
-
-# Step 4: Generate dbt project from the design
-uv run dataforge generate design.json --format dbt --output ./sales_dbt
-
-# Step 5: Validate the generated output
-uv run dataforge validate ./sales_dbt --type output
-
-# Step 6: Run your dbt project
-cd sales_dbt
-dbt run
-dbt test
+```text
+/plugin marketplace add prajwalgajakesari/dataforge
+/plugin install dataforge
 ```
 
-### API Workflow
+With the skill loaded, ask Claude things like "profile the `public` schema of my Postgres
+database and tell me what is not in 3NF", "design a star schema for these tables", or
+"generate a dbt project from this design and validate it". The skill tells Claude the exact
+commands, how to read the outputs, and its guardrails: never print secrets, confirm before
+anything writes to a database, and keep generated code in a git tracked directory.
 
-Use the REST API to drive the same pipeline programmatically:
+## Project layout
 
-| Step | Method | Endpoint | Description |
-|------|--------|----------|-------------|
-| 1 | `POST` | `/api/v1/modeling/sessions/` | Create a session (project name, requirements, data source, strategy) |
-| 2 | `POST` | `/api/v1/modeling/sessions/{id}/discover` | Discover database schemas |
-| 3 | `GET` | `/api/v1/modeling/sessions/{id}/tables` | List discovered tables |
-| 4 | `POST` | `/api/v1/modeling/sessions/{id}/profile` | Profile data quality and statistics |
-| 5 | `POST` | `/api/v1/modeling/sessions/{id}/design` | Design model with LLM |
-| 6 | `POST` | `/api/v1/modeling/sessions/{id}/generate` | Generate dbt code |
-| 7 | `GET` | `/api/v1/modeling/sessions/{id}/files` | List generated files |
-| 8 | `GET` | `/api/v1/modeling/sessions/{id}/files/{path}` | Get file content |
-
-Example with `curl`:
-
-```bash
-# Create a session
-curl -X POST http://localhost:8000/api/v1/modeling/sessions/ \
-  -H "Content-Type: application/json" \
-  -d '{
-    "project_name": "sales_analytics",
-    "requirements": "Build a star schema for e-commerce sales",
-    "data_source": "postgres",
-    "modeling_strategy": "STAR_SCHEMA"
-  }'
-
-# Run discovery (replace SESSION_ID with the id from the response above)
-curl -X POST http://localhost:8000/api/v1/modeling/sessions/SESSION_ID/discover
-
-# Continue through profile -> design -> generate...
-```
-
-### Interactive Chat
-
-For a conversational experience:
-
-```bash
-uv run dataforge chat
-```
-
-Within the chat, describe what you need in plain English:
-> "I need a sales analytics data mart with customer dimensions and order facts"
-
-DataForge will walk through discovery, profiling, design, and generation interactively.
-
-### Modeling Strategies
-
-| Strategy | CLI Flag | What It Produces | dbt Generation |
-|----------|----------|------------------|----------------|
-| **Star Schema** | `STAR_SCHEMA` | Staging models, dimensions, fact tables | Supported |
-| **Normalized 3NF** | `NORMALIZED_3NF` | Entities + relationships | Design only |
-| **Data Vault 2.0** | `DATA_VAULT` | Hubs, links, satellites | Design only |
-
-### Output Formats
-
-The `generate` command supports:
-- **`dbt`** - Complete dbt project (models, sources, tests, docs, `dbt_project.yml`)
-- **`sql`** - Raw DDL `CREATE TABLE` statements
-
----
-
-## 📁 Project Structure
-
-```
+```text
 dataforge/
-├── core/                          # Core business logic
-│   ├── agents/                   # AI agents (base + modeling)
-│   ├── analysis/                 # Data analysis modules
-│   │   ├── profiler.py          # Enhanced data profiling
-│   │   ├── fd_detector.py       # Functional dependency detection
-│   │   ├── key_finder.py        # Candidate key discovery
-│   │   ├── relationship_inferrer.py  # Relationship inference
-│   │   ├── pattern_detector.py  # Pattern detection
-│   │   └── type_inference.py    # Semantic type inference
-│   ├── normalization/            # Normalization engine
-│   │   ├── violations.py        # Violation detection (1NF-BCNF)
-│   │   ├── normalizer_1nf.py   # 1NF normalizer
-│   │   ├── normalizer_2nf.py   # 2NF normalizer
-│   │   ├── normalizer_3nf.py   # 3NF normalizer
-│   │   └── decomposer.py       # Table decomposition
-│   ├── generators/               # Code generators
-│   │   ├── dbt_generator.py     # dbt project generation
-│   │   ├── generator_3nf.py     # 3NF SQL generation
-│   │   └── generator_data_vault.py  # Data Vault generation
-│   ├── validators/               # Validation layer
-│   │   ├── schema_validator.py  # Schema validation
-│   │   ├── design_validator.py  # Design validation
-│   │   ├── output_validator.py  # Output validation
-│   │   └── data_validator.py    # Data validation
-│   ├── graph/                    # LangGraph workflow
-│   │   ├── modeling_graph.py    # Main workflow orchestration
-│   │   └── nodes/               # Modular graph nodes
-│   ├── mcp/                      # MCP integration layer
-│   │   ├── registry.py          # MCP server registry
-│   │   ├── client.py            # Universal MCP client
-│   │   └── servers/             # Built-in MCP servers (Postgres)
-│   ├── models/                   # Data models (Pydantic)
-│   ├── prompts/                  # LLM prompt templates
-│   ├── workspace/                # Workspace and git management
-│   └── utils/                    # Config, LLM client, logging
-│
-├── interfaces/                    # User interfaces
-│   └── cli/                      # Typer CLI application
-│       ├── main.py              # CLI commands
-│       └── chat.py              # Interactive chat mode
-│
-├── api/                           # REST API (FastAPI)
-│   ├── server.py                 # FastAPI app and lifespan
-│   ├── dependencies.py           # Dependency injection
-│   ├── models/                   # API request/response models
-│   └── routes/                   # API routes
-│       ├── modeling/            # Modeling endpoints
-│       │   ├── sessions.py     # Session CRUD
-│       │   ├── discovery.py    # Schema discovery
-│       │   ├── profiling.py    # Data profiling
-│       │   ├── design.py       # Model design
-│       │   └── generation.py   # Code generation
-│       └── health.py            # Health check
-│
-├── web/                           # React frontend (Vite + TypeScript)
-│   ├── src/                      # React source code
-│   └── package.json
-│
-├── tests/                         # Test suite
-│   ├── unit/
-│   ├── integration/
-│   └── e2e/
-│
-├── .env.example                   # Environment variable template
-└── pyproject.toml                 # Python project configuration
+  interfaces/cli/        Typer CLI (main.py) and chat REPL (chat.py)
+  core/
+    analysis/            profiler, fd_detector, key_finder, type_inference, pattern_detector
+    normalization/       violations (1NF to BCNF), normalizers, decomposer
+    generators/          dbt_generator, generator_3nf, generator_data_vault
+    validators/          schema, design, output, data validators
+    prompts/             design prompts for Claude
+    graph/               LangGraph workflow and nodes
+    agents/              agent wrapper around the workflow
+    mcp/                 registry and client scaffolding; servers/postgres_mcp.py (asyncpg)
+    models/              Pydantic models: schema, analysis, design
+    utils/               settings, Anthropic client, logging
+    workspace/           workspace directories with git init
+  api/                   FastAPI server, routes, in memory session store
+  web/                   React + Vite prototype (not wired to the API yet)
+  skills/dataforge/      Claude Code skill and CLI reference
+  .claude-plugin/        plugin.json and marketplace.json
+  examples/              sample_schema.json, sample_star_design.json, workflow script
+  scripts/               offline demo of the pipeline
+  docs/                  getting started guide and design documents
+  tests/                 unit, integration and e2e suites
 ```
 
----
-
-## 🔧 Development
-
-### Setup Development Environment
+## Development
 
 ```bash
-# Install with all dependencies (dev, test, docs)
 uv sync --all-extras
-
-# Install pre-commit hooks
-uv run pre-commit install
+uv run pytest                       # 24 passed, 1 skipped (needs a database and API key)
+uv run ruff check core interfaces api
+uv run black --check core interfaces api
+uv run mypy core interfaces api
+uv run uvicorn api.server:app --reload    # http://localhost:8000/docs
+cd web && npm install && npm run dev      # http://localhost:5173
 ```
 
-### Running the Full Stack Locally
+The ruff and mypy configuration in `pyproject.toml` is stricter than the current code; expect
+pre-existing findings.
 
-```bash
-# Terminal 1: Start the API server
-uv run uvicorn api.server:app --reload
-# -> http://localhost:8000 (Swagger at /docs)
+## Status
 
-# Terminal 2: Start the web frontend
-cd web && npm install && npm run dev
-# -> http://localhost:5173
-```
+Alpha. The pieces below are separated by what has been exercised.
 
-### Running Tests
+### Works today
 
-```bash
-# All tests
-uv run pytest
+- `normalize`, `generate --format dbt|sql`, `validate` (schema, design, output), `init`,
+  `list`, `status`, `version`, all run from files with no external services.
+- `analyze` against PostgreSQL via asyncpg, including FD and candidate key detection.
+- `design` and `chat` with an Anthropic key. Default model id is
+  `claude-3-5-sonnet-20241022`; set `DEFAULT_MODEL` or `--model` if that id is retired for
+  your account.
+- dbt generation for star schema designs; the sample output passes `dbt parse`.
+- FastAPI server with health, MCP listing and session routes for discover, profile, design and
+  generate. Sessions are in memory. Discovery needs a PostgreSQL server enabled in
+  `~/.dataforge/mcp-servers.yml`.
 
-# Specific test file
-uv run pytest tests/unit/test_agents.py
+### Planned or partial
 
-# With verbose output
-uv run pytest -v
+- MCP registry and client are scaffolding with `TODO`s; PostgreSQL is the only connector.
+  MySQL, Snowflake and BigQuery drivers are dependencies only.
+- dbt generation for 3NF and Data Vault from the CLI (today: DDL via `--format sql`; the
+  generator classes exist and are used by the LangGraph workflow).
+- `normalize` reports violations and steps but does not rewrite tables yet.
+- `generate --format sqlalchemy`, `init --template`, and non-Postgres URLs in `analyze` are
+  accepted by the parser but not implemented.
+- Web UI wiring to the API.
+- Airflow and Terraform generation: no code exists yet, despite the `init --type` help text.
 
-# With coverage
-uv run pytest --cov=core --cov=interfaces --cov=api
+## Contributing
 
-# Stop on first failure
-uv run pytest -x
-```
+See [CONTRIBUTING.md](CONTRIBUTING.md). Issues and pull requests are welcome at
+https://github.com/prajwalgajakesari/dataforge/issues.
 
-### Code Quality
+## License
 
-```bash
-# Format code
-uv run black .
-uv run ruff check . --fix
-
-# Type checking
-uv run mypy core/ interfaces/ api/
-```
-
-### Building Documentation
-
-```bash
-# Install docs dependencies
-uv sync --extra docs
-
-# Serve docs locally
-cd docs && mkdocs serve
-
-# Build static site
-mkdocs build
-```
-
----
-
-## 🔌 Extending DataForge
-
-### Adding a New MCP Server
-
-1. Create a new server implementation in `core/mcp/servers/`:
-   ```python
-   # core/mcp/servers/your_source.py
-   from core.mcp.client import MCPClient
-
-   class YourSourceMCP(MCPClient):
-       # Implement connection and operations
-       pass
-   ```
-
-2. Register it in `~/.dataforge/mcp-servers.yml`:
-   ```yaml
-   servers:
-     - name: your_source
-       type: database
-       capabilities: [query, schema]
-       connection_config:
-         host: ${YOUR_SOURCE_HOST}
-         # ... etc
-   ```
-
-### Creating Custom Templates
-
-1. Add a template directory in `core/workspace/templates/`:
-   ```
-   templates/
-   └── your_template/
-       ├── template.yml       # Template metadata
-       ├── dbt_project.yml
-       └── models/
-   ```
-
-2. Use it when creating workspaces:
-   ```python
-   workspace.create_workspace(
-       name="my-project",
-       project_type="dbt",
-       template="your_template"
-   )
-   ```
-
----
-
-## 📚 Documentation
-
-- **[Architecture Guide](docs/architecture.md)** - Detailed system architecture
-- **[MCP Integration Guide](docs/mcp_guide.md)** - Working with MCP servers
-- **[API Reference](docs/api_reference.md)** - API documentation
-- **[User Guide](docs/user_guide.md)** - Complete user guide
-
----
-
-## 🤝 Contributing
-
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
-
-### Development Workflow
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Make your changes
-4. Run tests and linting
-5. Commit your changes (`git commit -m 'Add amazing feature'`)
-6. Push to the branch (`git push origin feature/amazing-feature`)
-7. Open a Pull Request
-
----
-
-## 📋 Roadmap
-
-### Phase 1: MVP - Data Modeling (Current)
-- ✅ Core agent system (LangGraph workflow)
-- ✅ MCP registry and PostgreSQL client
-- ✅ Workspace manager with git integration
-- ✅ Schema discovery and table introspection
-- ✅ Data profiling (statistics, quality scores, semantic types)
-- ✅ Functional dependency detection and candidate key discovery
-- ✅ Normalization engine (1NF through BCNF violation detection)
-- ✅ LLM-powered model design (Star Schema, 3NF, Data Vault)
-- ✅ dbt project generation (Star Schema)
-- ✅ DDL/SQL generation
-- ✅ Validation layer (schema, design, output)
-- ✅ CLI with analyze, normalize, design, generate, validate, chat commands
-- ✅ REST API (FastAPI) with session-based workflow
-- ✅ React web frontend
-
-### Phase 2: Enhanced Capabilities
-- 📅 VSCode extension
-- 📅 Pipeline generation (Airflow)
-- 📅 Additional MCP servers (MySQL, Snowflake, BigQuery)
-- 📅 dbt generation for 3NF and Data Vault strategies
-- 📅 Visual lineage diagrams
-
-### Phase 3: Full Stack
-- 📅 Infrastructure automation (Terraform)
-- 📅 Team collaboration features
-- 📅 CI/CD integration
-- 📅 Enterprise features
-
----
-
-## 🔒 Security
-
-- All credentials are encrypted at rest
-- PII detection to prevent accidental exposure
-- Audit logging for all operations
-- No data is sent to external services except the LLM API
-
-See our [Security Policy](SECURITY.md) for more details.
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
-## 🙏 Acknowledgments
-
-- Built with [LangGraph](https://github.com/langchain-ai/langgraph) for agent orchestration
-- Powered by [Anthropic Claude](https://www.anthropic.com/) for AI capabilities
-- Inspired by the amazing work of the dbt community
-
----
-
-## 📞 Support
-
-- **Issues**: [GitHub Issues](https://github.com/your-org/dataforge/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/your-org/dataforge/discussions)
-- **Email**: support@dataforge.dev
-
----
-
-## 🌟 Star History
-
-If you find DataForge useful, please consider giving it a star on GitHub!
-
----
-
-**Made with ❤️ by the DataForge team**
+MIT. See [LICENSE](LICENSE).

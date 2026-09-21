@@ -1,226 +1,47 @@
-# DataForge Examples
+# Examples
 
-This directory contains practical examples demonstrating how to use DataForge.
+Files in this directory let you try DataForge without a database or an API key.
 
-## Available Examples
+| File | What it is | Used by |
+|---|---|---|
+| `sample_schema.json` | Two tables (`order_items`, `customers`) with functional dependencies and candidate keys, in the shape `dataforge analyze` writes. `order_items` deliberately violates 1NF, 2NF and 3NF. | `dataforge normalize`, `dataforge validate --type schema`, `dataforge design --input` |
+| `sample_star_design.json` | A small star schema (three staging models, two dimensions, one fact) in the shape `dataforge design --strategy STAR_SCHEMA` writes. | `dataforge generate`, `dataforge validate --type design` |
+| `modeling_workflow_example.py` | Runs the full LangGraph workflow: connect to PostgreSQL, discover, profile, design with Claude, write a dbt project into a workspace. Needs `ANTHROPIC_API_KEY` and the `POSTGRES_*` variables. | `uv run python examples/modeling_workflow_example.py` |
 
-### 1. Modeling Workflow Example ([modeling_workflow_example.py](modeling_workflow_example.py))
+## Offline walkthrough
 
-Complete demonstration of the data modeling workflow from database discovery to dbt project generation.
+Run from the repository root.
 
-**What it demonstrates:**
-- Workspace initialization
-- MCP registry setup
-- Data modeling agent execution
-- Schema discovery
-- AI-powered model design
-- dbt project generation
-- Error handling and logging
-- Usage and cost tracking
-
-**Prerequisites:**
 ```bash
-# Set environment variables
-export ANTHROPIC_API_KEY=your_api_key
-export POSTGRES_HOST=localhost
-export POSTGRES_PORT=5432
-export POSTGRES_USER=postgres
-export POSTGRES_PASSWORD=password
-export POSTGRES_DATABASE=analytics
+# Check the sample schema for normal form violations
+uv run dataforge normalize examples/sample_schema.json --target 3NF --verbose
+
+# Validate the sample design, then turn it into a dbt project
+uv run dataforge validate examples/sample_star_design.json --type design
+uv run dataforge generate examples/sample_star_design.json --format dbt --output ./out/sales_dbt
+uv run dataforge validate ./out/sales_dbt --type output
+
+# Or emit plain CREATE TABLE statements
+uv run dataforge generate examples/sample_star_design.json --format sql --output ./out/sales_sql
 ```
 
-**Run:**
+The generated project parses with dbt. From inside the output directory:
+
 ```bash
-uv run python examples/modeling_workflow_example.py
+uvx --from dbt-postgres dbt deps --profiles-dir .dbt
+uvx --from dbt-postgres dbt parse --profiles-dir .dbt
 ```
 
-**Expected Output:**
-- Workspace created at `~/dataforge-workspaces/ecommerce_analytics`
-- Complete dbt project generated
-- Model design summary
-- LLM usage statistics
-- Next steps instructions
+`scripts/demo_workflow.py` is a scripted, offline demonstration of the same pipeline using
+the Python API directly with a mocked schema: `uv run python scripts/demo_workflow.py`.
 
-### Alternative Examples in the Same File
+## With a database and Claude
 
-#### Custom Configuration Example
-Shows how to use custom PostgreSQL configuration:
-```python
-asyncio.run(example_with_custom_config())
+```bash
+uv run dataforge analyze postgresql://USER:PASSWORD@HOST:5432/DB --schema public --output-file analysis.json
+uv run dataforge design "Sales mart with customer and product dimensions" \
+  --strategy STAR_SCHEMA --input analysis.json --output design.json
+uv run dataforge generate design.json --format dbt --output ./sales_dbt
 ```
 
-#### Streaming Updates Example
-Demonstrates real-time workflow progress:
-```python
-asyncio.run(example_with_streaming())
-```
-
-## Quick Start
-
-1. **Install dependencies:**
-   ```bash
-   uv sync
-   ```
-
-2. **Configure environment:**
-   ```bash
-   cp .env.example .env
-   # Edit .env with your credentials
-   ```
-
-3. **Run an example:**
-   ```bash
-   uv run python examples/modeling_workflow_example.py
-   ```
-
-## Example Output
-
-```
-================================================================================
-DataForge - Data Modeling Workflow Example
-================================================================================
-
-[1/5] Initializing workspace...
-✓ Created workspace: /Users/you/dataforge-workspaces/ecommerce_analytics
-
-[2/5] Initializing MCP registry...
-✓ Available data sources: ['postgres']
-
-[3/5] Initializing LLM client...
-✓ Using model: claude-3-5-sonnet-20241022
-
-[4/5] Creating data modeling agent...
-✓ Agent capabilities: ['schema_discovery', 'data_profiling', ...]
-
-[5/5] Executing modeling workflow...
---------------------------------------------------------------------------------
-Starting model generation...
-Discovering schemas...
-Discovered 3 schemas
-Selecting relevant schema...
-Selected schema: public
-Discovering tables...
-Discovered 12 tables
-Profiling data...
-Profiled 12 tables
-Designing data model...
-Designed 12 staging, 4 dimensions, 2 facts
-Generating dbt project...
-Generated 24 files
---------------------------------------------------------------------------------
-
-✓ Modeling workflow completed!
-
-Generated 24 files:
-  - dbt_project.yml
-  - models/staging/sources.yml
-  - models/staging/stg_customers.sql
-  - models/marts/dim_customers.sql
-  - models/marts/fct_orders.sql
-  ...
-
-Model Design Summary:
-  Staging Models: 12
-  Dimensions: 4
-  Facts: 2
-
-Workspace Location:
-  /Users/you/dataforge-workspaces/ecommerce_analytics
-
-Next Steps:
-  1. cd /Users/you/dataforge-workspaces/ecommerce_analytics
-  2. Review generated dbt project
-  3. Configure ~/.dbt/profiles.yml with your database credentials
-  4. Run: dbt deps
-  5. Run: dbt run
-  6. Run: dbt test
-
-LLM Usage:
-  Total Tokens: 15,234
-  Cost: $0.0456
-
-✓ Cleaned up resources
-```
-
-## Customizing Examples
-
-### Change Requirements
-
-Edit the `requirements` string in the example:
-
-```python
-requirements = """
-Create a custom analytics mart with:
-1. Your dimension 1
-2. Your dimension 2
-3. Your fact table
-"""
-```
-
-### Use Different Database
-
-Configure different MCP server:
-
-```python
-custom_config = MCPServerConfig(
-    name="mysql",
-    type="database",
-    connection_config={
-        "host": "mysql-host",
-        "user": "user",
-        # ...
-    },
-)
-```
-
-### Add Custom Parameters
-
-Pass additional parameters to the agent:
-
-```python
-state = AgentState(
-    # ...
-    parameters={
-        "project_name": "my_project",
-        "target_database": "analytics",
-        "target_schema": "custom_schema",
-        "materialize_as": "table",  # or "view"
-    },
-)
-```
-
-## Troubleshooting
-
-### Error: "Anthropic API key is required"
-**Solution:** Set `ANTHROPIC_API_KEY` environment variable
-
-### Error: "No data sources available"
-**Solution:** Configure MCP servers in `~/.dataforge/mcp-servers.yml`
-
-### Error: "PostgreSQL connection failed"
-**Solution:** Check database credentials and network access
-
-### Warning: "Could not profile table X"
-**Solution:** This is normal for large tables. Profiling is optional and failures won't stop the workflow.
-
-## More Information
-
-- **Implementation Guide**: [../docs/IMPLEMENTATION_GUIDE.md](../docs/IMPLEMENTATION_GUIDE.md)
-- **Implementation Summary**: [../IMPLEMENTATION_SUMMARY.md](../IMPLEMENTATION_SUMMARY.md)
-- **Full Documentation**: [../README.md](../README.md)
-- **API Documentation**: [../docs/api_reference.md](../docs/api_reference.md)
-
-## Contributing Examples
-
-To add a new example:
-
-1. Create a new Python file in this directory
-2. Follow the structure of existing examples
-3. Add comprehensive comments
-4. Include error handling
-5. Update this README
-6. Test the example thoroughly
-
-## License
-
-MIT License - see [LICENSE](../LICENSE) for details.
+See `../docs/getting-started.md` for configuration and troubleshooting.
