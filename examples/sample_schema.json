@@ -1,0 +1,62 @@
+{
+  "connection": "example",
+  "schema": "public",
+  "tables": [
+    {
+      "name": "order_items",
+      "schema": "public",
+      "row_count": 12000,
+      "column_count": 8,
+      "quality_score": 91.5,
+      "columns": [
+        {"name": "order_id", "data_type": "integer", "is_nullable": false, "is_primary_key": true},
+        {"name": "product_id", "data_type": "integer", "is_nullable": false, "is_primary_key": true},
+        {"name": "quantity", "data_type": "integer", "is_nullable": false},
+        {"name": "product_name", "data_type": "varchar", "is_nullable": true},
+        {"name": "customer_id", "data_type": "integer", "is_nullable": false},
+        {"name": "customer_email", "data_type": "varchar", "is_nullable": true},
+        {"name": "tags", "data_type": "text[]", "is_nullable": true},
+        {"name": "ordered_at", "data_type": "timestamp", "is_nullable": false}
+      ]
+    },
+    {
+      "name": "customers",
+      "schema": "public",
+      "row_count": 3000,
+      "column_count": 3,
+      "quality_score": 98.0,
+      "columns": [
+        {"name": "customer_id", "data_type": "integer", "is_nullable": false, "is_primary_key": true},
+        {"name": "email", "data_type": "varchar", "is_nullable": false},
+        {"name": "full_name", "data_type": "varchar", "is_nullable": true}
+      ]
+    }
+  ],
+  "functional_dependencies": {
+    "order_items": [
+      {"determinant": ["order_id", "product_id"], "dependent": "quantity", "confidence": 1.0},
+      {"determinant": ["product_id"], "dependent": "product_name", "confidence": 1.0, "is_partial": true},
+      {"determinant": ["order_id"], "dependent": "customer_id", "confidence": 1.0, "is_partial": true},
+      {"determinant": ["customer_id"], "dependent": "customer_email", "confidence": 0.99, "is_transitive": true}
+    ],
+    "customers": [
+      {"determinant": ["customer_id"], "dependent": "email", "confidence": 1.0},
+      {"determinant": ["customer_id"], "dependent": "full_name", "confidence": 1.0}
+    ]
+  },
+  "candidate_keys": {
+    "order_items": {
+      "primary_key": ["order_id", "product_id"],
+      "candidates": [
+        {"columns": ["order_id", "product_id"], "uniqueness": 1.0, "recommended": true}
+      ]
+    },
+    "customers": {
+      "primary_key": ["customer_id"],
+      "candidates": [
+        {"columns": ["customer_id"], "uniqueness": 1.0, "recommended": true},
+        {"columns": ["email"], "uniqueness": 1.0, "recommended": false}
+      ]
+    }
+  }
+}

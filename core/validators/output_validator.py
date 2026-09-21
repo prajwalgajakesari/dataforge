@@ -214,12 +214,22 @@ class OutputValidator:
         if self.output_type == "dbt" and output_path.is_dir() and not self.dry_run:
             can_compile, compilation_output = self._run_dbt_compile(output_path)
             if not can_compile:
+                dbt_missing = bool(compilation_output) and "dbt command not found" in compilation_output
                 all_issues.append(OutputIssue(
                     file_path=str(output_path),
                     line_number=0,
                     issue_type=IssueType.COMPILATION_ERROR,
-                    message=f"dbt compile failed: {compilation_output}",
-                    severity=IssueSeverity.ERROR
+                    message=(
+                        f"dbt compile skipped: {compilation_output}"
+                        if dbt_missing
+                        else f"dbt compile failed: {compilation_output}"
+                    ),
+                    severity=IssueSeverity.WARNING if dbt_missing else IssueSeverity.ERROR,
+                    suggestion=(
+                        "Install dbt-core and an adapter (e.g. dbt-postgres) to enable compile checks"
+                        if dbt_missing
+                        else None
+                    ),
                 ))
 
         report = OutputValidationReport(
@@ -663,6 +673,11 @@ class OutputValidator:
             ))
             return issues
 
+        # Project-level files use a different structure from schema/sources files.
+        # In dbt_project.yml, `models` is a dict of configs, not a list of model docs.
+        if file_path.name in ("dbt_project.yml", "packages.yml", "profiles.yml", "selectors.yml"):
+            return issues
+
         # Check for version field
         if "version" not in data:
             issues.append(OutputIssue(
@@ -959,8 +974,13 @@ class OutputValidator:
     # =========================================================================
 
     def _find_line_number(self, content: str, pattern: str) -> int:
-        """Find the line number where a pattern first occurs."""
-        match = re.search(pattern, content, re.IGNORECASE)
+        """Find the line number where a pattern (regex, or literal text) first occurs."""
+        try:
+            match = re.search(pattern, content, re.IGNORECASE)
+        except re.error:
+            # Not a valid regex (e.g. a bare "("): fall back to a literal search
+            index = content.lower().find(pattern.lower())
+            return content[:index].count("\n") + 1 if index >= 0 else 1
         if match:
             return content[:match.start()].count("\n") + 1
         return 1

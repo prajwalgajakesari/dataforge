@@ -11,6 +11,7 @@ Generates complete dbt projects including:
 - Profiles configuration
 """
 
+import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -24,6 +25,10 @@ from core.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+
+# Pydantic warns because these models have a field named "schema" (dbt terminology).
+# The field does not interfere with anything, so silence the warning.
+warnings.filterwarnings("ignore", message='Field name "schema"', category=UserWarning)
 
 class ColumnDefinition(BaseModel):
     """Definition of a database column."""
@@ -312,12 +317,12 @@ renamed as (
     select
         -- Primary Key
 {% for col in pk_columns %}
-        {{ col.name }},
+        {{ col.name }}{{ "," if (not loop.last) or other_columns else "" }}
 {% endfor %}
 
         -- Attributes
 {% for col in other_columns %}
-        {{ col.name }}{% if col.description %} -- {{ col.description }}{% endif %}{{ "," if not loop.last else "" }}
+        {{ col.name }}{{ "," if not loop.last else "" }}{% if col.description %}  -- {{ col.description }}{% endif %}
 {% endfor %}
 
     from source
@@ -377,13 +382,13 @@ select * from renamed
         template = Template(
             """{{ '{{' }} config(
     materialized='table',
-    schema='{{ target_schema }}'
+    schema={{ target_schema }}
 ) {{ '}}' }}
 
 {% for source_model in source_models %}
-with {{ source_model.split('_')[1] if '_' in source_model else source_model }} as (
+{{ 'with ' if loop.first else '' }}{{ source_model.split('_')[1] if '_' in source_model else source_model }} as (
     select * from {{ '{{' }} ref('{{ source_model }}') {{ '}}' }}
-){{ "," if not loop.last else "" }}
+),
 {% endfor %}
 
 joined as (
@@ -397,12 +402,12 @@ joined as (
 
         -- Natural Key
 {% for col in pk_columns %}
-        {{ col.name }},
+        {{ col.name }}{{ "," if (not loop.last) or other_columns else "" }}
 {% endfor %}
 
         -- Attributes
 {% for col in other_columns %}
-        {{ col.name }}{% if col.description %} -- {{ col.description }}{% endif %}{{ "," if not loop.last else "" }}
+        {{ col.name }}{{ "," if not loop.last else "" }}{% if col.description %}  -- {{ col.description }}{% endif %}
 {% endfor %}
 
     from {{ source_models[0].split('_')[1] if '_' in source_models[0] else source_models[0] }}{{ join_clauses }}
@@ -419,7 +424,7 @@ select * from joined
 
         return template.render(
             model_name=model.name,
-            target_schema="{{ var('target_schema') }}",
+            target_schema="var('target_schema')",
             source_models=model.source_models,
             pk_columns=pk_columns,
             other_columns=other_columns,
@@ -463,13 +468,13 @@ select * from joined
         template = Template(
             """{{ '{{' }} config(
     materialized='table',
-    schema='{{ target_schema }}'
+    schema={{ target_schema }}
 ) {{ '}}' }}
 
 {% for source_model in source_models %}
-with {{ source_model.split('_')[1] if '_' in source_model else source_model }} as (
+{{ 'with ' if loop.first else '' }}{{ source_model.split('_')[1] if '_' in source_model else source_model }} as (
     select * from {{ '{{' }} ref('{{ source_model }}') {{ '}}' }}
-){{ "," if not loop.last else "" }}
+),
 {% endfor %}
 
 fact as (
@@ -483,7 +488,7 @@ fact as (
 
         -- Foreign Keys (Dimensions)
 {% for dim in dimensions %}
-        {{ dim }}_key,
+        {{ dim if dim.endswith('_key') else dim ~ '_key' }}{{ "," if (not loop.last) or measures else "" }}
 {% endfor %}
 
         -- Measures
@@ -505,7 +510,7 @@ select * from fact
 
         return template.render(
             model_name=model.name,
-            target_schema="{{ var('target_schema') }}",
+            target_schema="var('target_schema')",
             source_models=model.source_models,
             pk_columns=pk_columns,
             dimensions=model.dimensions,

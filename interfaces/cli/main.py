@@ -122,6 +122,186 @@ def _display_as_table(data: Dict[str, Any]) -> None:
             console.print(table)
 
 
+def _redact_connection(connection: str) -> str:
+    """Mask the password in a database URL so it never lands in saved output."""
+    try:
+        from urllib.parse import urlsplit, urlunsplit
+
+        parts = urlsplit(connection)
+        if parts.password:
+            netloc = parts.netloc.replace(f":{parts.password}@", ":***@", 1)
+            return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+    except ValueError:
+        pass
+    return connection
+
+
+def _flatten_analysis(data: Dict[str, Any]) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """
+    Flatten the per-table dictionaries written by `dataforge analyze` into flat lists.
+
+    `analyze` writes functional_dependencies and candidate_keys keyed by table name.
+    The prompt formatters expect flat lists, so convert and tag each entry with its table.
+    """
+    fds: List[Dict[str, Any]] = []
+    raw_fds = data.get("functional_dependencies") or []
+    if isinstance(raw_fds, dict):
+        for table_name, table_fds in raw_fds.items():
+            for fd in table_fds or []:
+                fds.append({**fd, "table_name": table_name})
+    else:
+        fds = list(raw_fds)
+
+    keys: List[Dict[str, Any]] = []
+    raw_keys = data.get("candidate_keys") or []
+    if isinstance(raw_keys, dict):
+        for table_name, key_info in raw_keys.items():
+            candidates = key_info.get("candidates", []) if isinstance(key_info, dict) else key_info
+            for ck in candidates or []:
+                keys.append({
+                    **ck,
+                    "table_name": table_name,
+                    "recommended_as_primary": ck.get(
+                        "recommended_as_primary", ck.get("recommended", False)
+                    ),
+                })
+    else:
+        keys = list(raw_keys)
+
+    return fds, keys
+
+
+def _design_file_to_model(data: Dict[str, Any]) -> Any:
+    """
+    Convert a design document (as written by `dataforge design`) into a ModelDesign.
+
+    Supports the star schema (staging_models/dimensions/facts/bridges), 3NF (entities)
+    and Data Vault (hubs/links/satellites) sections.
+    """
+    from core.models.design import (
+        ColumnRole,
+        DesignedColumn,
+        DesignedRelationship,
+        DesignedTable,
+        ModelDesign,
+        ModelingStrategy,
+        TableRole,
+    )
+
+    strategy_map = {
+        "star_schema": ModelingStrategy.STAR_SCHEMA,
+        "star": ModelingStrategy.STAR_SCHEMA,
+        "snowflake": ModelingStrategy.SNOWFLAKE,
+        "normalized_3nf": ModelingStrategy.NORMALIZED_3NF,
+        "3nf": ModelingStrategy.NORMALIZED_3NF,
+        "data_vault": ModelingStrategy.DATA_VAULT,
+        "one_big_table": ModelingStrategy.ONE_BIG_TABLE,
+    }
+    strategy = strategy_map.get(
+        str(data.get("strategy", "star_schema")).lower(), ModelingStrategy.STAR_SCHEMA
+    )
+
+    section_roles = {
+        "staging_models": TableRole.STAGING,
+        "dimensions": TableRole.DIMENSION,
+        "facts": TableRole.FACT,
+        "bridges": TableRole.BRIDGE,
+        "entities": TableRole.ENTITY,
+        "lookups": TableRole.LOOKUP,
+        "hubs": TableRole.HUB,
+        "links": TableRole.LINK,
+        "satellites": TableRole.SATELLITE,
+    }
+
+    tables: List[Any] = []
+    for section, role in section_roles.items():
+        for tbl in data.get(section, []) or []:
+            measure_names = [
+                m.get("name") if isinstance(m, dict) else str(m) for m in tbl.get("measures", []) or []
+            ]
+            measure_names = [m for m in measure_names if m]
+            degenerate = set(tbl.get("degenerate_dimensions", []) or [])
+
+            columns: List[Any] = []
+            seen: set = set()
+            for col in tbl.get("columns", []) or []:
+                name = col.get("name", "")
+                seen.add(name)
+                col_role = None
+                if col.get("role"):
+                    try:
+                        col_role = ColumnRole(str(col["role"]).lower())
+                    except ValueError:
+                        col_role = None
+                if col_role is None:
+                    if col.get("is_primary_key"):
+                        col_role = ColumnRole.SURROGATE_KEY
+                    elif col.get("references_table") or col.get("is_foreign_key"):
+                        col_role = ColumnRole.FOREIGN_KEY
+                    elif name in measure_names:
+                        col_role = ColumnRole.MEASURE
+                    elif name in degenerate:
+                        col_role = ColumnRole.DEGENERATE_DIMENSION
+                    else:
+                        col_role = ColumnRole.ATTRIBUTE
+                columns.append(DesignedColumn(
+                    name=name,
+                    data_type=col.get("data_type", "varchar"),
+                    role=col_role,
+                    is_nullable=col.get("is_nullable", True),
+                    is_primary_key=col.get("is_primary_key", False),
+                    references_table=col.get("references_table"),
+                    references_column=col.get("references_column"),
+                    description=col.get("description"),
+                ))
+
+            # Measures listed separately from columns become measure columns.
+            for measure in tbl.get("measures", []) or []:
+                if isinstance(measure, dict) and measure.get("name") not in seen:
+                    columns.append(DesignedColumn(
+                        name=measure["name"],
+                        data_type=measure.get("data_type", "numeric"),
+                        role=ColumnRole.MEASURE,
+                        description=measure.get("description"),
+                    ))
+
+            table_kwargs: Dict[str, Any] = {
+                "name": tbl.get("name", ""),
+                "role": role,
+                "columns": columns,
+                "source_tables": tbl.get("source_tables", []) or [],
+                "grain": tbl.get("grain"),
+                "measures": measure_names,
+                "dimension_keys": tbl.get("dimension_keys", []) or [],
+                "description": tbl.get("description"),
+            }
+            if role == TableRole.DIMENSION and tbl.get("scd_type") is not None:
+                table_kwargs["scd_type"] = tbl.get("scd_type")
+            tables.append(DesignedTable(**table_kwargs))
+
+    relationships: List[Any] = []
+    for rel in data.get("relationships", []) or []:
+        relationships.append(DesignedRelationship(
+            name=rel.get("name") or f"fk_{rel.get('from_table')}_{rel.get('to_table')}",
+            from_table=rel.get("from_table", ""),
+            from_columns=rel.get("from_columns", []) or [],
+            to_table=rel.get("to_table", ""),
+            to_columns=rel.get("to_columns", []) or [],
+            cardinality=rel.get("cardinality", "N:1"),
+            is_required=rel.get("is_required", True),
+        ))
+
+    return ModelDesign(
+        name=data.get("model_name") or data.get("name") or "Design",
+        strategy=strategy,
+        tables=tables,
+        relationships=relationships,
+        design_notes=data.get("design_notes"),
+        assumptions=data.get("assumptions", []) or [],
+        warnings=data.get("warnings", []) or [],
+    )
+
+
 # =============================================================================
 # Existing Commands
 # =============================================================================
@@ -283,7 +463,7 @@ def analyze(
         from core.analysis.key_finder import CandidateKeyFinder
 
         results: Dict[str, Any] = {
-            "connection": connection,
+            "connection": _redact_connection(connection),
             "schema": schema or "public",
             "tables": [],
             "functional_dependencies": {},
@@ -734,9 +914,10 @@ def design(
                     profile_context = format_profile_context(profiles)
 
                 if "functional_dependencies" in data or "candidate_keys" in data:
+                    flat_fds, flat_keys = _flatten_analysis(data)
                     analysis_context = format_analysis_context(
-                        fds=data.get("functional_dependencies"),
-                        keys=data.get("candidate_keys"),
+                        fds=flat_fds,
+                        keys=flat_keys,
                         relationships=data.get("relationships"),
                     )
             except Exception as e:
@@ -924,6 +1105,9 @@ def generate(
                 dimension_models: List[DimensionModelDefinition] = []
                 fact_models: List[FactModelDefinition] = []
 
+                # Source schema the staging models read from (sources.yml + source() calls)
+                source_schema = design_data.get("source_schema") or "public"
+
                 # Process staging models
                 for stg in design_data.get("staging_models", []):
                     columns = [
@@ -936,18 +1120,30 @@ def generate(
                         for col in stg.get("columns", [])
                     ]
 
+                    stg_name = stg.get("name", "").replace("stg_", "")
+                    source_table_name = (stg.get("source_tables") or [stg_name])[0]
+
                     source_table = TableDefinition(
-                        name=stg.get("name", "").replace("stg_", ""),
-                        schema="source",
+                        name=source_table_name,
+                        schema=source_schema,
                         columns=columns,
                         description=stg.get("description", ""),
                     )
 
                     staging_models.append(StagingModelDefinition(
-                        name=stg.get("name", "").replace("stg_", ""),
+                        name=stg_name,
                         source_table=source_table,
                         columns=columns,
                         description=stg.get("description", ""),
+                    ))
+
+                # One dbt source per source schema so that source() calls resolve
+                if staging_models:
+                    sources.append(SourceDefinition(
+                        name=source_schema,
+                        schema=source_schema,
+                        tables=[stg.source_table for stg in staging_models],
+                        description=f"Source tables in schema {source_schema}",
                     ))
 
                 # Process dimensions
@@ -1173,30 +1369,15 @@ def validate(
             try:
                 data = _load_json_or_yaml(path)
 
-                from core.models.design import ModelDesign, ModelingStrategy
-
-                # Parse design
-                strategy_map = {
-                    "star_schema": ModelingStrategy.STAR_SCHEMA,
-                    "normalized_3nf": ModelingStrategy.NORMALIZED_3NF,
-                    "data_vault": ModelingStrategy.DATA_VAULT,
-                }
-
-                design_strategy = strategy_map.get(
-                    data.get("strategy", "star_schema").lower(),
-                    ModelingStrategy.STAR_SCHEMA
-                )
-
-                validator = DesignValidator(design_strategy)
-
-                model_design = ModelDesign(
-                    name=data.get("model_name", "Design"),
-                    strategy=design_strategy,
-                    tables=[],
-                    relationships=[],
-                )
-
+                # Convert the design document into a ModelDesign and validate it
+                model_design = _design_file_to_model(data)
+                validator = DesignValidator(model_design.strategy)
                 report = validator.validate_design(model_design)
+
+                result["info"].append(
+                    f"Strategy: {model_design.strategy.value}, tables: {len(model_design.tables)}, "
+                    f"relationships: {len(model_design.relationships)}"
+                )
 
                 result["is_valid"] = report.is_valid
                 result["errors"].extend([

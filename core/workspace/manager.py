@@ -61,7 +61,10 @@ class WorkspaceManager:
         if base_path:
             self.base_path = Path(base_path).expanduser().resolve()
         else:
-            self.base_path = Path.home() / "dataforge-workspaces"
+            # Honour DATAFORGE_WORKSPACE_DIR (default: ~/dataforge-workspaces)
+            from core.utils.config import settings
+
+            self.base_path = settings.get_workspace_path()
 
         self.base_path.mkdir(parents=True, exist_ok=True)
         self.current_workspace: Optional[WorkspaceConfig] = None

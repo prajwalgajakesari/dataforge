@@ -5,12 +5,12 @@ build-backend = "hatchling.build"
 [project]
 name = "dataforge"
 version = "0.1.0"
-description = "AI-powered data engineering platform for automated data modeling and infrastructure"
+description = "AI-assisted data modeling: profile a PostgreSQL schema, check normal forms, design star, 3NF or Data Vault models with Claude, and generate a dbt project"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
-    {name = "DataForge Team", email = "team@dataforge.dev"}
+    {name = "Prajwal P"}
 ]
 keywords = ["data-engineering", "dbt", "ai", "automation", "data-modeling"]
 classifiers = [
@@ -47,6 +47,8 @@ dependencies = [
     "httpx>=0.27.0",
     "aiofiles>=23.2.0",
     "python-json-logger>=2.0.7",
+    "asyncpg>=0.31.0",
+    "sqlparse>=0.6.0",
 ]
 
 [project.optional-dependencies]
@@ -78,10 +80,9 @@ docs = [
 dataforge = "interfaces.cli.main:app"
 
 [project.urls]
-Homepage = "https://github.com/dataforge/dataforge"
-Documentation = "https://docs.dataforge.dev"
-Repository = "https://github.com/dataforge/dataforge"
-"Bug Tracker" = "https://github.com/dataforge/dataforge/issues"
+Homepage = "https://github.com/prajwalgajakesari/dataforge"
+Repository = "https://github.com/prajwalgajakesari/dataforge"
+"Bug Tracker" = "https://github.com/prajwalgajakesari/dataforge/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["core", "interfaces", "api"]

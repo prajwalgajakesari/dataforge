@@ -1,0 +1,95 @@
+{
+  "model_name": "sales_analytics",
+  "strategy": "star_schema",
+  "design_notes": "Small star schema for order analytics. Hand-written example in the shape the design command produces.",
+  "target_database": "analytics",
+  "target_schema": "marts",
+  "staging_models": [
+    {
+      "name": "stg_orders",
+      "source_tables": ["orders"],
+      "description": "Staging layer for orders",
+      "columns": [
+        {"name": "order_id", "data_type": "integer", "description": "Order identifier", "is_primary_key": true},
+        {"name": "customer_id", "data_type": "integer", "description": "Customer identifier"},
+        {"name": "product_id", "data_type": "integer", "description": "Product identifier"},
+        {"name": "ordered_at", "data_type": "timestamp", "description": "Order timestamp"},
+        {"name": "quantity", "data_type": "integer", "description": "Units ordered"},
+        {"name": "order_amount", "data_type": "numeric(18,2)", "description": "Order total"}
+      ]
+    },
+    {
+      "name": "stg_customers",
+      "source_tables": ["customers"],
+      "description": "Staging layer for customers",
+      "columns": [
+        {"name": "customer_id", "data_type": "integer", "description": "Customer identifier", "is_primary_key": true},
+        {"name": "email", "data_type": "varchar", "description": "Email address"},
+        {"name": "full_name", "data_type": "varchar", "description": "Customer name"}
+      ]
+    },
+    {
+      "name": "stg_products",
+      "source_tables": ["products"],
+      "description": "Staging layer for products",
+      "columns": [
+        {"name": "product_id", "data_type": "integer", "description": "Product identifier", "is_primary_key": true},
+        {"name": "product_name", "data_type": "varchar", "description": "Product name"},
+        {"name": "category", "data_type": "varchar", "description": "Product category"}
+      ]
+    }
+  ],
+  "dimensions": [
+    {
+      "name": "dim_customer",
+      "source_tables": ["stg_customers"],
+      "description": "Customer dimension",
+      "scd_type": 2,
+      "columns": [
+        {"name": "dim_customer_key", "data_type": "bigint", "role": "surrogate_key", "is_primary_key": true, "is_nullable": false, "description": "Surrogate key"},
+        {"name": "customer_id", "data_type": "integer", "role": "natural_key", "is_nullable": false, "description": "Business key"},
+        {"name": "email", "data_type": "varchar", "description": "Email address"},
+        {"name": "full_name", "data_type": "varchar", "description": "Customer name"}
+      ]
+    },
+    {
+      "name": "dim_product",
+      "source_tables": ["stg_products"],
+      "description": "Product dimension",
+      "scd_type": 1,
+      "columns": [
+        {"name": "dim_product_key", "data_type": "bigint", "role": "surrogate_key", "is_primary_key": true, "is_nullable": false, "description": "Surrogate key"},
+        {"name": "product_id", "data_type": "integer", "role": "natural_key", "is_nullable": false, "description": "Business key"},
+        {"name": "product_name", "data_type": "varchar", "description": "Product name"},
+        {"name": "category", "data_type": "varchar", "description": "Product category"}
+      ]
+    }
+  ],
+  "facts": [
+    {
+      "name": "fact_orders",
+      "source_tables": ["stg_orders"],
+      "description": "One row per order line",
+      "grain": "one row per order line item",
+      "columns": [
+        {"name": "fact_order_key", "data_type": "bigint", "role": "surrogate_key", "is_primary_key": true, "description": "Surrogate key"},
+        {"name": "dim_customer_key", "data_type": "bigint", "role": "foreign_key", "references_table": "dim_customer", "references_column": "dim_customer_key", "description": "Customer FK"},
+        {"name": "dim_product_key", "data_type": "bigint", "role": "foreign_key", "references_table": "dim_product", "references_column": "dim_product_key", "description": "Product FK"},
+        {"name": "order_id", "data_type": "integer", "description": "Degenerate dimension"},
+        {"name": "ordered_at", "data_type": "timestamp", "description": "Order timestamp"},
+        {"name": "quantity", "data_type": "integer", "description": "Units ordered"},
+        {"name": "order_amount", "data_type": "numeric(18,2)", "description": "Order total"}
+      ],
+      "measures": [
+        {"name": "quantity", "data_type": "integer", "aggregation_type": "additive", "description": "Units ordered"},
+        {"name": "order_amount", "data_type": "numeric(18,2)", "aggregation_type": "additive", "description": "Order total"}
+      ],
+      "dimension_keys": ["dim_customer_key", "dim_product_key"],
+      "degenerate_dimensions": ["order_id"]
+    }
+  ],
+  "relationships": [
+    {"name": "fact_orders_to_dim_customer", "from_table": "fact_orders", "from_columns": ["dim_customer_key"], "to_table": "dim_customer", "to_columns": ["dim_customer_key"], "cardinality": "N:1", "is_required": true},
+    {"name": "fact_orders_to_dim_product", "from_table": "fact_orders", "from_columns": ["dim_product_key"], "to_table": "dim_product", "to_columns": ["dim_product_key"], "cardinality": "N:1", "is_required": true}
+  ]
+}
