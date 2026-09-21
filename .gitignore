@@ -40,10 +40,10 @@ venv.bak/
 *~
 .DS_Store
 
-# Environment Variables
+# Environment Variables (keep the example template tracked)
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 
 # Testing
 .pytest_cache/
@@ -88,12 +88,16 @@ dataforge-workspaces/
 workspace_metadata.db
 audit.log
 
-# Claude Flow Runtime
+# Claude Code / Claude Flow local state
+.claude/
+.claude-flow/
 .swarm/
+.hive-mind/
 
 # Generated Code (for testing)
 generated/
 output/
+out/
 temp/
 
 # Cloud Credentials
