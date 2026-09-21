@@ -34,7 +34,7 @@ cp .env.example .env
 | Variable | Needed for | Notes |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | `design`, `chat`, API design route | Required for anything that calls Claude |
-| `DEFAULT_MODEL` | same | Defaults to `claude-3-5-sonnet-20241022`. Set a current model id if that one is retired for your account, or pass `--model` |
+| `DEFAULT_MODEL` | same | Defaults to `claude-opus-5`. Set a current model id if that one is retired for your account, or pass `--model` |
 | `DATAFORGE_WORKSPACE_DIR` | `init`, `list` | Defaults to `~/dataforge-workspaces` |
 | `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DATABASE` | API discovery, MCP config | The CLI `analyze` command takes a connection URL instead |
 | `API_HOST`, `API_PORT`, `CORS_ORIGINS` | API server | Defaults: `0.0.0.0`, `8000`, localhost origins |

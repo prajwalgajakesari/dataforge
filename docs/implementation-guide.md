@@ -67,7 +67,7 @@ from core.utils.llm_client import LLMClient
 
 # Initialize client
 client = LLMClient(
-    model="claude-3-5-sonnet-20241022",
+    model="claude-opus-5",
     temperature=0.0,
     max_tokens=4096,
 )
@@ -102,7 +102,7 @@ Set in `.env` or environment:
 
 ```bash
 ANTHROPIC_API_KEY=your_key_here
-DEFAULT_MODEL=claude-3-5-sonnet-20241022
+DEFAULT_MODEL=claude-opus-5
 MODEL_TEMPERATURE=0.0
 MODEL_MAX_TOKENS=4096
 ```
@@ -505,7 +505,7 @@ POSTGRES_PASSWORD=password
 POSTGRES_DATABASE=analytics
 
 # Optional
-DEFAULT_MODEL=claude-3-5-sonnet-20241022
+DEFAULT_MODEL=claude-opus-5
 MODEL_TEMPERATURE=0.0
 MODEL_MAX_TOKENS=4096
 DATAFORGE_WORKSPACE_DIR=~/dataforge-workspaces

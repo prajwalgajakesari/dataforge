@@ -194,7 +194,7 @@ Alpha. The pieces below are separated by what has been exercised.
   `list`, `status`, `version`, all run from files with no external services.
 - `analyze` against PostgreSQL via asyncpg, including FD and candidate key detection.
 - `design` and `chat` with an Anthropic key. Default model id is
-  `claude-3-5-sonnet-20241022`; set `DEFAULT_MODEL` or `--model` if that id is retired for
+  `claude-opus-5`; set `DEFAULT_MODEL` or `--model` if that id is retired for
   your account.
 - dbt generation for star schema designs; the sample output passes `dbt parse`.
 - FastAPI server with health, MCP listing and session routes for discover, profile, design and

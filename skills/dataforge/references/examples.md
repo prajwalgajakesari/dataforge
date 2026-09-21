@@ -17,7 +17,7 @@ DataForge Status
   Environment    development
   Log Level      INFO
   Workspace Dir  <DATAFORGE_WORKSPACE_DIR>
-  Default Model  claude-3-5-sonnet-20241022
+  Default Model  claude-opus-5
   API Key        Not set
 MCP servers status coming soon...
 ```

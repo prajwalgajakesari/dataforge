@@ -57,6 +57,11 @@ class LLMClient:
 
     # Pricing per 1M tokens (as of Jan 2025)
     PRICING = {
+        "claude-opus-5": {"input": 5.0, "output": 25.0},
+        "claude-sonnet-5": {"input": 2.0, "output": 10.0},
+        "claude-haiku-4-5": {"input": 1.0, "output": 5.0},
+        "claude-fable-5-1": {"input": 10.0, "output": 50.0},
+        # Legacy ids kept for cost reporting on old sessions
         "claude-3-5-sonnet-20241022": {"input": 3.0, "output": 15.0},
         "claude-3-5-haiku-20241022": {"input": 0.8, "output": 4.0},
         "claude-3-opus-20240229": {"input": 15.0, "output": 75.0},

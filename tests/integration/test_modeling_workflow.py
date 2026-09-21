@@ -48,7 +48,7 @@ def mock_llm_client():
     client.generate = AsyncMock(
         return_value=LLMResponse(
             content="Test response",
-            model="claude-3-5-sonnet-20241022",
+            model="claude-opus-5",
             usage=LLMUsage(
                 prompt_tokens=100,
                 completion_tokens=50,

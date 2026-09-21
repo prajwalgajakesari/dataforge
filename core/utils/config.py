@@ -33,7 +33,7 @@ class DataForgeSettings(BaseSettings):
     anthropic_api_key: str = Field(default="", alias="ANTHROPIC_API_KEY")
     openai_api_key: Optional[str] = Field(default=None, alias="OPENAI_API_KEY")
     default_model: str = Field(
-        default="claude-3-5-sonnet-20241022",
+        default="claude-opus-5",
         alias="DEFAULT_MODEL"
     )
     model_temperature: float = Field(default=0.0, alias="MODEL_TEMPERATURE")
